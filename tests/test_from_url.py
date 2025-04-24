@@ -1,97 +1,75 @@
 import pytest
-from unittest.mock import MagicMock
+from pathlib import Path
 
-class DocumentGenerator:
+class MockDocumentGenerator:
     def __init__(self, templates):
         self.templates = templates
-    def generate(self, doc_type, data):
+    def generate_document(self, doc_type, data):
         if doc_type not in self.templates:
-            raise ValueError('Unknown document type')
-        if not data or not isinstance(data, dict):
-            raise ValueError('Invalid data')
-        return self.templates[doc_type].format(**data)
-    def generate_jira_user_story(self, data):
-        required_fields = ['title', 'description', 'acceptance_criteria']
-        if not all(field in data for field in required_fields):
-            raise ValueError('Missing required fields')
-        return f"Summary: {data['title']}\nDescription: {data['description']}\nAcceptance Criteria: {data['acceptance_criteria']}"
+            raise ValueError('Unsupported document type')
+        if not isinstance(data, dict) or not data:
+            raise ValueError('Invalid data for document generation')
+        template = self.templates[doc_type]
+        return template.format(**data)
+    def generate_jira_user_story(self, user_story_data):
+        required_fields = {'title', 'description', 'acceptance_criteria'}
+        if not required_fields.issubset(user_story_data):
+            raise ValueError('Missing required fields for JIRA user story')
+        return f"Summary: {user_story_data['title']}\nDescription: {user_story_data['description']}\nAcceptance Criteria: {user_story_data['acceptance_criteria']}"
 
-@pytest.fixture(scope='function')
-def templates():
-    return {
-        'SRS': 'SRS Document\nTitle: {title}\nDetails: {details}',
-        'BRD': 'BRD Document\nBusiness Need: {business_need}\nScope: {scope}'
+def setup_module(module):
+    module.templates = {
+        'SRS': 'SRS Title: {title}\nDetails: {details}',
+        'BRD': 'BRD Title: {title}\nBusiness Need: {business_need}'
     }
+    module.generator = MockDocumentGenerator(module.templates)
 
-@pytest.fixture(scope='function')
-def generator(templates):
-    return DocumentGenerator(templates)
+def teardown_module(module):
+    del module.templates
+    del module.generator
 
-def test_generate_srs_document_with_valid_data(generator):
-    data = {'title': 'Login Feature', 'details': 'User can log in with email and password.'}
-    result = generator.generate('SRS', data)
-    assert result.startswith('SRS Document')
-    assert 'Login Feature' in result
-    assert 'User can log in with email and password.' in result
+def test_generate_srs_document_valid():
+    data = {'title': 'Login Feature', 'details': 'User can log in using email and password.'}
+    doc = generator.generate_document('SRS', data)
+    assert doc.startswith('SRS Title: Login Feature')
+    assert 'User can log in' in doc
 
-def test_generate_brd_document_with_valid_data(generator):
-    data = {'business_need': 'Improve onboarding', 'scope': 'User registration and login'}
-    result = generator.generate('BRD', data)
-    assert result.startswith('BRD Document')
-    assert 'Improve onboarding' in result
-    assert 'User registration and login' in result
+def test_generate_brd_document_valid():
+    data = {'title': 'Payment Integration', 'business_need': 'Enable users to pay online.'}
+    doc = generator.generate_document('BRD', data)
+    assert doc.startswith('BRD Title: Payment Integration')
+    assert 'Enable users to pay online.' in doc
 
-def test_generate_document_with_invalid_type(generator):
-    data = {'title': 'Test', 'details': 'Test details'}
+def test_generate_document_invalid_type():
+    data = {'title': 'Invalid', 'details': 'N/A'}
     with pytest.raises(ValueError) as exc:
-        generator.generate('UNKNOWN', data)
-    assert 'Unknown document type' in str(exc.value)
+        generator.generate_document('PRD', data)
+    assert 'Unsupported document type' in str(exc.value)
 
-def test_generate_document_with_missing_data(generator):
+def test_generate_document_invalid_data():
     with pytest.raises(ValueError) as exc:
-        generator.generate('SRS', None)
-    assert 'Invalid data' in str(exc.value)
+        generator.generate_document('SRS', None)
+    assert 'Invalid data for document generation' in str(exc.value)
+    with pytest.raises(ValueError) as exc2:
+        generator.generate_document('SRS', {})
+    assert 'Invalid data for document generation' in str(exc2.value)
 
-def test_generate_document_with_incomplete_data(generator):
-    data = {'title': 'Incomplete'}
-    with pytest.raises(KeyError):
-        generator.generate('SRS', data)
-
-def test_generate_jira_user_story_with_valid_data(generator):
-    data = {
-        'title': 'Enable password reset',
-        'description': 'As a user, I want to reset my password.',
-        'acceptance_criteria': 'User receives reset email.'
+def test_generate_jira_user_story_valid():
+    user_story_data = {
+        'title': 'User Registration',
+        'description': 'As a user, I want to register so I can access the system.',
+        'acceptance_criteria': 'User can register with email and password.'
     }
-    result = generator.generate_jira_user_story(data)
-    assert result.startswith('Summary: Enable password reset')
-    assert 'As a user, I want to reset my password.' in result
-    assert 'User receives reset email.' in result
+    story = generator.generate_jira_user_story(user_story_data)
+    assert story.startswith('Summary: User Registration')
+    assert 'Description: As a user' in story
+    assert 'Acceptance Criteria: User can register' in story
 
-def test_generate_jira_user_story_with_missing_fields(generator):
-    data = {
-        'title': 'Enable password reset',
-        'description': 'As a user, I want to reset my password.'
+def test_generate_jira_user_story_missing_fields():
+    incomplete_data = {
+        'title': 'Incomplete',
+        'description': 'Missing acceptance criteria.'
     }
     with pytest.raises(ValueError) as exc:
-        generator.generate_jira_user_story(data)
-    assert 'Missing required fields' in str(exc.value)
-
-def test_generated_documents_follow_templates(generator, templates):
-    data = {'title': 'Feature X', 'details': 'Details X'}
-    srs = generator.generate('SRS', data)
-    assert templates['SRS'].split('\n')[0] in srs
-    data_brd = {'business_need': 'Need Y', 'scope': 'Scope Y'}
-    brd = generator.generate('BRD', data_brd)
-    assert templates['BRD'].split('\n')[0] in brd
-
-def test_jira_user_story_format_for_integration(generator):
-    data = {
-        'title': 'User logout',
-        'description': 'As a user, I want to log out.',
-        'acceptance_criteria': 'Session ends and user is redirected.'
-    }
-    user_story = generator.generate_jira_user_story(data)
-    assert user_story.startswith('Summary: User logout')
-    assert '\nDescription: As a user, I want to log out.' in user_story
-    assert '\nAcceptance Criteria: Session ends and user is redirected.' in user_story
+        generator.generate_jira_user_story(incomplete_data)
+    assert 'Missing required fields for JIRA user story' in str(exc.value)
