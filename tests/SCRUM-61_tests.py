@@ -1,144 +1,121 @@
-Certainly! Below you’ll find comprehensive pytest test cases for the user story, covering **RBAC**, **MFA**, **AES-256 encryption**, and **TLS**. The tests are structured, modular, and commented for clarity. They include setup and teardown using pytest fixtures, check main functionality and edge cases, and assume the presence of mockable security-related functions/classes in your codebase.
-
-```python
 import pytest
-from unittest import mock
+from unittest.mock import MagicMock, patch
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import os
 
-# Mock implementations for demonstration purposes
-# Replace these with your actual implementations
-class SecuritySystem:
+class User:
+    def __init__(self, username, roles, mfa_enabled):
+        self.username = username
+        self.roles = roles
+        self.mfa_enabled = mfa_enabled
+        self.is_authenticated = False
+
+class System:
     def __init__(self):
         self.users = {}
-        self.roles = {'admin': ['read', 'write', 'delete']}
-    def add_user(self, username, role):
-        self.users[username] = {'role': role, 'mfa_enabled': False}
-    def set_mfa(self, username, enabled):
-        self.users[username]['mfa_enabled'] = enabled
-    def has_access(self, username, permission):
-        role = self.users[username]['role']
-        return permission in self.roles.get(role, [])
-    def encrypt_data(self, data):
-        return b'encrypted_data_with_AES256'
-    def decrypt_data(self, encrypted_data):
-        return b'decrypted_data'
-    def is_tls_enabled(self):
-        return True
+        self.tls_enabled = False
+        self.encryption_key = os.urandom(32)
 
-# ------------------------
-# Fixtures for setup/teardown
-# ------------------------
+    def add_user(self, user):
+        self.users[user.username] = user
+
+    def authenticate(self, username, password, mfa_token=None):
+        user = self.users.get(username)
+        if not user:
+            return False
+        if user.mfa_enabled and mfa_token != 'valid_token':
+            return False
+        if password == 'correct_password':
+            user.is_authenticated = True
+            return True
+        return False
+
+    def check_rbac(self, username, required_role):
+        user = self.users.get(username)
+        if user and required_role in user.roles and user.is_authenticated:
+            return True
+        return False
+
+    def encrypt_data(self, data):
+        iv = os.urandom(16)
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        padded_data = data + b' ' * (16 - len(data) % 16)
+        ct = encryptor.update(padded_data) + encryptor.finalize()
+        return iv + ct
+
+    def decrypt_data(self, encrypted_data):
+        iv = encrypted_data[:16]
+        ct = encrypted_data[16:]
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded_data = decryptor.update(ct) + decryptor.finalize()
+        return padded_data.rstrip(b' ')
+
+    def enable_tls(self):
+        self.tls_enabled = True
+
+    def is_tls_enabled(self):
+        return self.tls_enabled
 
 @pytest.fixture
-def security_system():
-    # Setup: create a new security system instance
-    system = SecuritySystem()
-    # Add an admin user for tests
-    system.add_user('admin_user', 'admin')
-    yield system
-    # Teardown: cleanup actions if needed (none here)
+def system():
+    sys = System()
+    admin = User('admin', ['admin', 'user'], mfa_enabled=True)
+    user = User('user1', ['user'], mfa_enabled=False)
+    sys.add_user(admin)
+    sys.add_user(user)
+    yield sys
 
-# ------------------------
-# RBAC Test Cases
-# ------------------------
+def test_rbac_positive(system):
+    system.authenticate('admin', 'correct_password', mfa_token='valid_token')
+    assert system.check_rbac('admin', 'admin') is True
 
-def test_rbac_admin_access(security_system):
-    """Test that admin user can access all permissions."""
-    assert security_system.has_access('admin_user', 'read')
-    assert security_system.has_access('admin_user', 'write')
-    assert security_system.has_access('admin_user', 'delete')
+def test_rbac_negative_wrong_role(system):
+    system.authenticate('user1', 'correct_password')
+    assert system.check_rbac('user1', 'admin') is False
 
-def test_rbac_restricted_role(security_system):
-    """Test that users with restricted roles do not have admin permissions."""
-    security_system.roles['user'] = ['read']
-    security_system.add_user('regular_user', 'user')
-    assert security_system.has_access('regular_user', 'read')
-    assert not security_system.has_access('regular_user', 'write')
-    assert not security_system.has_access('regular_user', 'delete')
+def test_rbac_negative_not_authenticated(system):
+    assert system.check_rbac('admin', 'admin') is False
 
-def test_rbac_no_role(security_system):
-    """Edge case: User with undefined role has no permissions."""
-    security_system.add_user('no_role_user', 'unknown')
-    assert not security_system.has_access('no_role_user', 'read')
+def test_mfa_positive(system):
+    assert system.authenticate('admin', 'correct_password', mfa_token='valid_token') is True
 
-# ------------------------
-# MFA Test Cases
-# ------------------------
+def test_mfa_negative_missing_token(system):
+    assert system.authenticate('admin', 'correct_password') is False
 
-def test_mfa_enforcement_enabled(security_system):
-    """Test that MFA can be enabled and is enforced."""
-    security_system.set_mfa('admin_user', True)
-    assert security_system.users['admin_user']['mfa_enabled']
+def test_mfa_negative_wrong_token(system):
+    assert system.authenticate('admin', 'correct_password', mfa_token='invalid_token') is False
 
-def test_mfa_enforcement_disabled(security_system):
-    """Test that MFA is not enforced when disabled."""
-    security_system.set_mfa('admin_user', False)
-    assert not security_system.users['admin_user']['mfa_enabled']
+def test_mfa_not_required_for_user(system):
+    assert system.authenticate('user1', 'correct_password') is True
 
-def test_mfa_edge_case_missing_mfa(security_system):
-    """Edge case: MFA should fail if not enabled for a sensitive action."""
-    # Simulate sensitive action requiring MFA
-    security_system.set_mfa('admin_user', False)
-    # Replace with your actual function that checks MFA before sensitive actions
-    def sensitive_action_allowed(user):
-        return security_system.users[user]['mfa_enabled']
-    assert not sensitive_action_allowed('admin_user')
+def test_encryption_decryption_aes256(system):
+    data = b'sensitive data'
+    encrypted = system.encrypt_data(data)
+    assert encrypted != data
+    decrypted = system.decrypt_data(encrypted)
+    assert decrypted == data
 
-# ------------------------
-# AES-256 Encryption Test Cases
-# ------------------------
+def test_encryption_with_wrong_key(system):
+    data = b'sensitive data'
+    encrypted = system.encrypt_data(data)
+    original_key = system.encryption_key
+    system.encryption_key = os.urandom(32)
+    with pytest.raises(Exception):
+        system.decrypt_data(encrypted)
+    system.encryption_key = original_key
 
-def test_aes256_encryption_decryption(security_system):
-    """Test that data encrypted with AES-256 can be decrypted correctly."""
-    plain = b'sensitive_data'
-    encrypted = security_system.encrypt_data(plain)
-    decrypted = security_system.decrypt_data(encrypted)
-    assert isinstance(encrypted, bytes)
-    assert decrypted == b'decrypted_data'  # Replace with actual decrypted value
+def test_encryption_with_short_key(system):
+    data = b'sensitive data'
+    system.encryption_key = os.urandom(16)
+    with pytest.raises(ValueError):
+        system.encrypt_data(data)
 
-def test_encryption_uses_aes256(monkeypatch, security_system):
-    """Edge case: Ensure AES-256 algorithm is used."""
-    # Here you would check the algorithm, for example by patching the encrypt_data method
-    with mock.patch.object(security_system, 'encrypt_data', wraps=security_system.encrypt_data) as mock_encrypt:
-        security_system.encrypt_data(b'data')
-        # In reality, check that AES-256 is invoked (e.g., by inspecting parameters, etc.)
-        mock_encrypt.assert_called_once()
+def test_tls_positive(system):
+    system.enable_tls()
+    assert system.is_tls_enabled() is True
 
-# ------------------------
-# TLS Protocol Test Cases
-# ------------------------
-
-def test_tls_connection_enabled(security_system):
-    """Test that the system enforces TLS for data in transit."""
-    assert security_system.is_tls_enabled()
-
-def test_tls_disabled_edge_case(monkeypatch, security_system):
-    """Edge case: System should not allow non-TLS connections."""
-    monkeypatch.setattr(security_system, "is_tls_enabled", lambda: False)
-    assert not security_system.is_tls_enabled()
-
-# ------------------------
-# Compliance Test Case
-# ------------------------
-
-def test_system_meets_all_security_measures(security_system):
-    """Comprehensive test: All security measures are enforced together."""
-    security_system.set_mfa('admin_user', True)
-    encrypted = security_system.encrypt_data(b'test')
-    assert security_system.has_access('admin_user', 'read')
-    assert security_system.users['admin_user']['mfa_enabled']
-    assert isinstance(encrypted, bytes)
-    assert security_system.is_tls_enabled()
-
-```
-
----
-
-### Notes
-
-- **Replace** the `SecuritySystem` and its methods with your actual implementations.
-- **Mocking and monkeypatching** are used for edge cases (e.g., simulating disabled TLS, ensuring AES-256 is used).
-- **Setup/teardown** is handled via the `security_system` fixture.
-- **Descriptive comments** are included for clarity.
-- **Test coverage** includes main flows and edge cases for RBAC, MFA, encryption, TLS, and overall compliance.
-
-Let me know if you need these adapted to a specific framework or more detailed integration test examples!
+def test_tls_negative(system):
+    assert system.is_tls_enabled() is False
