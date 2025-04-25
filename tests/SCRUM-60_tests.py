@@ -3,99 +3,107 @@ import shutil
 import tempfile
 import pytest
 from unittest.mock import patch
-from requirement_extractor import extract_requirements
+from extractor import RequirementExtractor, ExtractionError
 
-def create_temp_file(suffix, content=b''):
-    fd, path = tempfile.mkstemp(suffix=suffix)
-    with os.fdopen(fd, 'wb') as tmp:
-        tmp.write(content)
-    return path
+def create_sample_pdf(path):
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font('Arial', size=12)
+    pdf.cell(200, 10, txt='Requirement: The system shall support PDF extraction.', ln=True)
+    pdf.output(path)
 
-@pytest.fixture(scope='function')
-def temp_files():
-    files = {}
-    pdf_content = b'%PDF-1.4 example pdf content'
-    docx_content = b'PK\x03\x04 example docx content'
-    xlsx_content = b'PK\x03\x04 example xlsx content'
-    image_content = b'\x89PNG\r\n\x1a\n example image content'
-    files['pdf'] = create_temp_file('.pdf', pdf_content)
-    files['docx'] = create_temp_file('.docx', docx_content)
-    files['xlsx'] = create_temp_file('.xlsx', xlsx_content)
-    files['image'] = create_temp_file('.png', image_content)
-    yield files
-    for f in files.values():
-        os.remove(f)
+def create_sample_docx(path):
+    from docx import Document
+    doc = Document()
+    doc.add_paragraph('Requirement: The system shall support Word document extraction.')
+    doc.save(path)
 
-@pytest.fixture(scope='function')
-def invalid_file():
-    path = create_temp_file('.txt', b'Just a plain text file')
-    yield path
-    os.remove(path)
+def create_sample_xlsx(path):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws['A1'] = 'Requirement'
+    ws['A2'] = 'The system shall support Excel extraction.'
+    wb.save(path)
 
-@pytest.fixture(scope='function')
-def corrupted_pdf():
-    path = create_temp_file('.pdf', b'not a real pdf')
-    yield path
-    os.remove(path)
+def create_sample_image(path):
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new('RGB', (400, 100), color=(255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 40), 'Requirement: The system shall support image extraction.', fill=(0, 0, 0))
+    img.save(path)
 
-@pytest.fixture(scope='function')
-def empty_file():
-    path = create_temp_file('.pdf', b'')
-    yield path
-    os.remove(path)
+@pytest.fixture(scope='module')
+def temp_dir():
+    dirpath = tempfile.mkdtemp()
+    yield dirpath
+    shutil.rmtree(dirpath)
 
-def test_extract_requirements_from_pdf(temp_files):
-    result = extract_requirements(temp_files['pdf'])
-    assert isinstance(result, dict)
-    assert 'requirements' in result
-    assert isinstance(result['requirements'], list)
+@pytest.fixture(scope='module')
+def extractor():
+    return RequirementExtractor()
 
-def test_extract_requirements_from_docx(temp_files):
-    result = extract_requirements(temp_files['docx'])
-    assert isinstance(result, dict)
-    assert 'requirements' in result
-    assert isinstance(result['requirements'], list)
+def test_extract_from_pdf(temp_dir, extractor):
+    pdf_path = os.path.join(temp_dir, 'sample.pdf')
+    create_sample_pdf(pdf_path)
+    requirements = extractor.extract(pdf_path)
+    assert isinstance(requirements, list)
+    assert any('PDF extraction' in req for req in requirements)
 
-def test_extract_requirements_from_xlsx(temp_files):
-    result = extract_requirements(temp_files['xlsx'])
-    assert isinstance(result, dict)
-    assert 'requirements' in result
-    assert isinstance(result['requirements'], list)
+def test_extract_from_docx(temp_dir, extractor):
+    docx_path = os.path.join(temp_dir, 'sample.docx')
+    create_sample_docx(docx_path)
+    requirements = extractor.extract(docx_path)
+    assert isinstance(requirements, list)
+    assert any('Word document extraction' in req for req in requirements)
 
-def test_extract_requirements_from_image(temp_files):
-    result = extract_requirements(temp_files['image'])
-    assert isinstance(result, dict)
-    assert 'requirements' in result
-    assert isinstance(result['requirements'], list)
+def test_extract_from_xlsx(temp_dir, extractor):
+    xlsx_path = os.path.join(temp_dir, 'sample.xlsx')
+    create_sample_xlsx(xlsx_path)
+    requirements = extractor.extract(xlsx_path)
+    assert isinstance(requirements, list)
+    assert any('Excel extraction' in req for req in requirements)
 
-def test_extract_requirements_from_unsupported_format(invalid_file):
-    with pytest.raises(ValueError):
-        extract_requirements(invalid_file)
+def test_extract_from_image(temp_dir, extractor):
+    image_path = os.path.join(temp_dir, 'sample.png')
+    create_sample_image(image_path)
+    requirements = extractor.extract(image_path)
+    assert isinstance(requirements, list)
+    assert any('image extraction' in req for req in requirements)
 
-def test_extract_requirements_from_corrupted_pdf(corrupted_pdf):
-    with pytest.raises(Exception):
-        extract_requirements(corrupted_pdf)
+def test_extract_from_unsupported_format(temp_dir, extractor):
+    txt_path = os.path.join(temp_dir, 'sample.txt')
+    with open(txt_path, 'w') as f:
+        f.write('Requirement: This is a plain text file.')
+    with pytest.raises(ExtractionError):
+        extractor.extract(txt_path)
 
-def test_extract_requirements_from_empty_file(empty_file):
-    with pytest.raises(ValueError):
-        extract_requirements(empty_file)
+def test_extract_from_corrupted_pdf(temp_dir, extractor):
+    pdf_path = os.path.join(temp_dir, 'corrupted.pdf')
+    with open(pdf_path, 'wb') as f:
+        f.write(b'%PDF-1.4 corrupted content')
+    with pytest.raises(ExtractionError):
+        extractor.extract(pdf_path)
 
-def test_extract_requirements_with_nonexistent_file():
-    with pytest.raises(FileNotFoundError):
-        extract_requirements('nonexistentfile.pdf')
+def test_extract_from_empty_file(temp_dir, extractor):
+    empty_path = os.path.join(temp_dir, 'empty.pdf')
+    open(empty_path, 'wb').close()
+    with pytest.raises(ExtractionError):
+        extractor.extract(empty_path)
 
-def test_extract_requirements_with_mocked_ai_model(temp_files):
-    with patch('requirement_extractor.call_generative_ai') as mock_ai:
-        mock_ai.return_value = {'requirements': ['Req1', 'Req2']}
-        result = extract_requirements(temp_files['pdf'])
-        assert result['requirements'] == ['Req1', 'Req2']
+def test_extract_with_ai_failure(temp_dir, extractor):
+    pdf_path = os.path.join(temp_dir, 'sample_ai_fail.pdf')
+    create_sample_pdf(pdf_path)
+    with patch.object(extractor, 'ai_model_extract', side_effect=ExtractionError('AI failure')):
+        with pytest.raises(ExtractionError):
+            extractor.extract(pdf_path)
 
-def test_extract_requirements_with_large_file(temp_files):
-    large_content = b'A' * (10 * 1024 * 1024)
-    path = create_temp_file('.pdf', large_content)
-    try:
-        result = extract_requirements(path)
-        assert isinstance(result, dict)
-        assert 'requirements' in result
-    finally:
-        os.remove(path)
+def test_extract_structure_of_output(temp_dir, extractor):
+    docx_path = os.path.join(temp_dir, 'sample_structure.docx')
+    create_sample_docx(docx_path)
+    requirements = extractor.extract(docx_path)
+    assert isinstance(requirements, list)
+    for req in requirements:
+        assert isinstance(req, str)
+        assert req.strip() != ''
