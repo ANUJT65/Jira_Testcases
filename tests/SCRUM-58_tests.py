@@ -1,5 +1,4 @@
-import pytest
-from unittest.mock import MagicMock
+
 
 class MockDocumentGenerator:
     def __init__(self, templates):
