@@ -2,108 +2,104 @@ import os
 import shutil
 import tempfile
 import pytest
-from unittest.mock import patch, MagicMock
 
 from requirement_extractor import RequirementExtractor, ExtractionError
 
-def create_temp_file(suffix, content=None):
-    temp_dir = tempfile.mkdtemp()
-    file_path = os.path.join(temp_dir, f"input{suffix}")
-    mode = 'wb' if isinstance(content, bytes) else 'w'
-    with open(file_path, mode) as f:
-        if content:
-            f.write(content)
-    return file_path, temp_dir
+def create_sample_pdf(path):
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font('Arial', size=12)
+    pdf.cell(200, 10, txt="Requirement: The system shall support user login.", ln=True)
+    pdf.output(path)
 
-@pytest.fixture(scope="function")
+def create_sample_docx(path):
+    from docx import Document
+    doc = Document()
+    doc.add_heading('Requirements', 0)
+    doc.add_paragraph('Requirement: The system shall support password reset.')
+    doc.save(path)
+
+def create_sample_xlsx(path):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws['A1'] = 'Requirement'
+    ws['A2'] = 'The system shall send notifications.'
+    wb.save(path)
+
+def create_sample_image(path):
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new('RGB', (400, 100), color = (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 40), "Requirement: The system shall log all actions.", fill=(0,0,0))
+    img.save(path)
+
+@pytest.fixture(scope="module")
+def temp_dir():
+    d = tempfile.mkdtemp()
+    yield d
+    shutil.rmtree(d)
+
+@pytest.fixture(scope="module")
 def extractor():
-    extractor = RequirementExtractor()
-    yield extractor
+    return RequirementExtractor()
 
-@pytest.fixture(scope="function")
-def cleanup_temp_dirs():
-    dirs = []
-    yield dirs
-    for d in dirs:
-        shutil.rmtree(d, ignore_errors=True)
+def test_extract_requirements_from_pdf(temp_dir, extractor):
+    pdf_path = os.path.join(temp_dir, 'sample.pdf')
+    create_sample_pdf(pdf_path)
+    requirements = extractor.extract(pdf_path)
+    assert isinstance(requirements, list)
+    assert any('login' in req.lower() for req in requirements)
 
-def test_extract_requirements_from_pdf_positive(extractor, cleanup_temp_dirs):
-    pdf_content = b'%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n'  # minimal PDF
-    file_path, temp_dir = create_temp_file('.pdf', pdf_content)
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_pdf', return_value=[{'id': 1, 'requirement': 'System shall extract requirements from PDF'}]):
-        result = extractor.extract(file_path)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract requirements from PDF'
+def test_extract_requirements_from_docx(temp_dir, extractor):
+    docx_path = os.path.join(temp_dir, 'sample.docx')
+    create_sample_docx(docx_path)
+    requirements = extractor.extract(docx_path)
+    assert isinstance(requirements, list)
+    assert any('password reset' in req.lower() for req in requirements)
 
-def test_extract_requirements_from_word_positive(extractor, cleanup_temp_dirs):
-    docx_content = b'PK\x03\x04'  # minimal DOCX header
-    file_path, temp_dir = create_temp_file('.docx', docx_content)
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_word', return_value=[{'id': 2, 'requirement': 'System shall extract requirements from Word'}]):
-        result = extractor.extract(file_path)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract requirements from Word'
+def test_extract_requirements_from_xlsx(temp_dir, extractor):
+    xlsx_path = os.path.join(temp_dir, 'sample.xlsx')
+    create_sample_xlsx(xlsx_path)
+    requirements = extractor.extract(xlsx_path)
+    assert isinstance(requirements, list)
+    assert any('notifications' in req.lower() for req in requirements)
 
-def test_extract_requirements_from_excel_positive(extractor, cleanup_temp_dirs):
-    xlsx_content = b'PK\x03\x04'  # minimal XLSX header
-    file_path, temp_dir = create_temp_file('.xlsx', xlsx_content)
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_excel', return_value=[{'id': 3, 'requirement': 'System shall extract requirements from Excel'}]):
-        result = extractor.extract(file_path)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract requirements from Excel'
+def test_extract_requirements_from_image(temp_dir, extractor):
+    image_path = os.path.join(temp_dir, 'sample.png')
+    create_sample_image(image_path)
+    requirements = extractor.extract(image_path)
+    assert isinstance(requirements, list)
+    assert any('log all actions' in req.lower() for req in requirements)
 
-def test_extract_requirements_from_image_positive(extractor, cleanup_temp_dirs):
-    image_content = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
-    file_path, temp_dir = create_temp_file('.png', image_content)
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_image', return_value=[{'id': 4, 'requirement': 'System shall extract requirements from image'}]):
-        result = extractor.extract(file_path)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract requirements from image'
-
-def test_extract_requirements_from_unsupported_format_negative(extractor, cleanup_temp_dirs):
-    file_path, temp_dir = create_temp_file('.txt', 'This is a plain text file.')
-    cleanup_temp_dirs.append(temp_dir)
+def test_extract_requirements_from_unsupported_format(temp_dir, extractor):
+    txt_path = os.path.join(temp_dir, 'sample.txt')
+    with open(txt_path, 'w') as f:
+        f.write('Requirement: The system shall be robust.')
     with pytest.raises(ExtractionError):
-        extractor.extract(file_path)
+        extractor.extract(txt_path)
 
-def test_extract_requirements_from_corrupted_pdf_negative(extractor, cleanup_temp_dirs):
-    pdf_content = b'not a real pdf'
-    file_path, temp_dir = create_temp_file('.pdf', pdf_content)
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_pdf', side_effect=ExtractionError('Corrupted PDF')):
-        with pytest.raises(ExtractionError):
-            extractor.extract(file_path)
+def test_extract_requirements_from_corrupted_pdf(temp_dir, extractor):
+    pdf_path = os.path.join(temp_dir, 'corrupted.pdf')
+    with open(pdf_path, 'wb') as f:
+        f.write(b'%PDF-1.4 corrupted content')
+    with pytest.raises(ExtractionError):
+        extractor.extract(pdf_path)
 
-def test_extract_requirements_from_empty_file_negative(extractor, cleanup_temp_dirs):
-    file_path, temp_dir = create_temp_file('.pdf', b'')
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_pdf', side_effect=ExtractionError('Empty file')):
-        with pytest.raises(ExtractionError):
-            extractor.extract(file_path)
+def test_extract_requirements_from_empty_file(temp_dir, extractor):
+    empty_path = os.path.join(temp_dir, 'empty.docx')
+    with open(empty_path, 'wb') as f:
+        pass
+    with pytest.raises(ExtractionError):
+        extractor.extract(empty_path)
 
-def test_extract_requirements_from_large_file_positive(extractor, cleanup_temp_dirs):
-    pdf_content = b'%PDF-1.4\n' + b'0' * 1024 * 1024  # 1MB PDF-like content
-    file_path, temp_dir = create_temp_file('.pdf', pdf_content)
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_pdf', return_value=[{'id': 5, 'requirement': 'System shall extract requirements from large PDF'}]):
-        result = extractor.extract(file_path)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract requirements from large PDF'
-
-def test_extract_requirements_from_email_html_positive(extractor, cleanup_temp_dirs):
-    file_path, temp_dir = create_temp_file('.eml', 'Subject: Requirements\n\n<html><body>Requirement: System shall extract from email</body></html>')
-    cleanup_temp_dirs.append(temp_dir)
-    with patch.object(extractor, '_extract_from_email', return_value=[{'id': 6, 'requirement': 'System shall extract from email'}]):
-        result = extractor.extract(file_path)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract from email'
-
-def test_extract_requirements_from_web_data_positive(extractor):
-    url = 'https://example.com/requirements'
-    with patch.object(extractor, '_extract_from_web', return_value=[{'id': 7, 'requirement': 'System shall extract from web data'}]):
-        result = extractor.extract(url)
-        assert isinstance(result, list)
-        assert result[0]['requirement'] == 'System shall extract from web data'
+def test_extract_requirements_with_no_requirements(temp_dir, extractor):
+    docx_path = os.path.join(temp_dir, 'noreq.docx')
+    from docx import Document
+    doc = Document()
+    doc.add_paragraph('This document contains no requirements.')
+    doc.save(docx_path)
+    requirements = extractor.extract(docx_path)
+    assert isinstance(requirements, list)
+    assert len(requirements) == 0
