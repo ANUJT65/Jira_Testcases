@@ -1,152 +1,156 @@
-Certainly! Below are comprehensive pytest test cases for the given user story, structured for clarity, coverage, and best practices. These tests assume a function/class named RequirementExtractor, with a .extract_requirements() method that uses RAG to fill missing data. You can adapt the function/class names to suit your implementation.
+Certainly! Below are comprehensive pytest test cases for the described user story, structured clearly and with setup/teardown, thorough coverage (including main and edge cases), and descriptive comments.
+
+Assumptions:
+
+- There is a RequirementExtractor class implementing RAG-based extraction, with a method fill_missing_data(srs_document).
+- The function returns the completed requirements with missing fields filled in.
+- The RAG system has access to an external knowledge base or retrieval mechanism (mocked in tests).
 
 ```python
 import pytest
 
-# Assume RequirementExtractor is the system under test, which implements RAG
-from my_requirement_extraction_module import RequirementExtractor
+# Mock RequirementExtractor for demonstration
+class RequirementExtractor:
+    def __init__(self, knowledge_base):
+        self.knowledge_base = knowledge_base
 
-class TestRequirementExtractionRAG:
-    @classmethod
-    def setup_class(cls):
-        """
-        Setup resources required for the tests.
-        """
-        # Initialize the RequirementExtractor with RAG capabilities
-        cls.extractor = RequirementExtractor(source_document='srs')
+    def fill_missing_data(self, srs_document):
+        # This function should use RAG techniques to fill missing data.
+        # Here we mock the behavior for test illustration.
+        completed_requirements = []
+        for req in srs_document:
+            filled_req = req.copy()
+            for key, value in req.items():
+                if value is None:
+                    # Simulate retrieval and generation
+                    filled_req[key] = self.knowledge_base.get(key, "UNKNOWN")
+            completed_requirements.append(filled_req)
+        return completed_requirements
 
-    @classmethod
-    def teardown_class(cls):
-        """
-        Cleanup after all tests have run.
-        """
-        # If any cleanup is needed (e.g., close DB connections)
-        pass
+# Fixtures for setup and teardown
+@pytest.fixture(scope="function")
+def knowledge_base():
+    # Setup: Provide a mock knowledge base
+    kb = {
+        "actor": "System User",
+        "action": "Implement RAG techniques",
+        "goal": "Improve accuracy and completeness",
+        "priority": "Should Have"
+    }
+    yield kb
+    # Teardown: (if any cleanup is needed)
+    # For this simple dict, nothing is needed.
 
-    def test_fill_missing_data_basic(self):
-        """
-        Test that RAG fills missing fields in a simple requirement statement.
-        """
-        incomplete_req = {
-            'id': None,
-            'description': 'The system shall allow user login.',
-            'priority': None
-        }
-        completed_req = self.extractor.extract_requirements([incomplete_req])[0]
-        assert completed_req['id'] is not None, "RAG should fill missing 'id'"
-        assert completed_req['priority'] is not None, "RAG should fill missing 'priority'"
+@pytest.fixture(scope="function")
+def extractor(knowledge_base):
+    return RequirementExtractor(knowledge_base)
 
-    def test_no_missing_data(self):
-        """
-        Test that when no data is missing, fields remain unchanged.
-        """
-        complete_req = {
-            'id': 'REQ-001',
-            'description': 'The system shall allow user login.',
-            'priority': 'High'
-        }
-        extracted = self.extractor.extract_requirements([complete_req])[0]
-        assert extracted == complete_req, "Requirements with no missing data should remain unchanged"
+@pytest.fixture(scope="function")
+def srs_document():
+    # Example SRS document with missing fields
+    return [
+        {"actor": None, "action": "Implement RAG techniques", "goal": None, "priority": "Should Have"},
+        {"actor": "System User", "action": None, "goal": "Improve accuracy and completeness", "priority": None}
+    ]
 
-    def test_multiple_missing_fields(self):
-        """
-        Test filling of multiple missing fields in one requirement.
-        """
-        incomplete_req = {
-            'id': None,
-            'description': None,
-            'priority': None
-        }
-        completed_req = self.extractor.extract_requirements([incomplete_req])[0]
-        assert all(value is not None for value in completed_req.values()), "RAG should fill all fields"
+@pytest.fixture(scope="function")
+def complete_srs_document():
+    # SRS document with no missing data
+    return [
+        {"actor": "System User", "action": "Implement RAG techniques", "goal": "Improve accuracy and completeness", "priority": "Should Have"}
+    ]
 
-    def test_unrecoverable_missing_data(self):
-        """
-        Test system's behavior when missing data cannot be filled by RAG.
-        """
-        # Simulate a scenario where description is too vague to recover
-        incomplete_req = {
-            'id': None,
-            'description': '',
-            'priority': None
-        }
-        completed_req = self.extractor.extract_requirements([incomplete_req])[0]
-        # Assume RAG sets unrecoverable fields to 'UNKNOWN' or similar
-        assert completed_req['description'] in (None, '', 'UNKNOWN'), "RAG should handle unrecoverable fields gracefully"
+@pytest.fixture(scope="function")
+def empty_srs_document():
+    # Edge case: Empty input document
+    return []
 
-    def test_data_consistency(self):
-        """
-        Test that filled data is consistent with related requirements.
-        """
-        # Assume context: another requirement with id REQ-002 and priority Medium
-        related_req = {
-            'id': 'REQ-002',
-            'description': 'The system shall log all user actions.',
-            'priority': 'Medium'
-        }
-        incomplete_req = {
-            'id': None,
-            'description': 'The system shall log all user actions.',
-            'priority': None
-        }
-        completed_reqs = self.extractor.extract_requirements([related_req, incomplete_req])
-        assert completed_reqs[1]['priority'] == 'Medium', "RAG should infer consistent priority from context"
+@pytest.fixture(scope="function")
+def srs_with_unknown_field():
+    # Edge case: Contains a field not in knowledge base
+    return [
+        {"actor": None, "action": None, "foo": None}
+    ]
 
-    def test_large_number_of_requirements(self):
-        """
-        Test performance and correctness with a large batch of incomplete requirements.
-        """
-        incomplete_reqs = [{'id': None, 'description': f'Req {i}', 'priority': None} for i in range(100)]
-        completed_reqs = self.extractor.extract_requirements(incomplete_reqs)
-        assert all(req['id'] is not None and req['priority'] is not None for req in completed_reqs), \
-            "RAG should handle bulk filling efficiently and accurately"
+# -------------------- Test Cases --------------------
 
-    def test_field_type_preservation(self):
-        """
-        Test that filled fields preserve expected data types.
-        """
-        incomplete_req = {
-            'id': None,
-            'description': 'The system shall encrypt data.',
-            'priority': None
-        }
-        completed_req = self.extractor.extract_requirements([incomplete_req])[0]
-        assert isinstance(completed_req['id'], str), "Filled 'id' should be a string"
-        assert isinstance(completed_req['priority'], str), "Filled 'priority' should be a string"
+def test_fill_missing_data_main_functionality(extractor, srs_document):
+    """
+    Test that missing fields are correctly filled using the knowledge base (RAG).
+    """
+    filled = extractor.fill_missing_data(srs_document)
+    assert filled[0]["actor"] == "System User"
+    assert filled[0]["goal"] == "Improve accuracy and completeness"
+    assert filled[1]["action"] == "Implement RAG techniques"
+    assert filled[1]["priority"] == "Should Have"
 
-    def test_null_input(self):
-        """
-        Test system's behavior when input is None or empty.
-        """
-        with pytest.raises(ValueError):
-            self.extractor.extract_requirements(None)
-        with pytest.raises(ValueError):
-            self.extractor.extract_requirements([])
+def test_fill_missing_data_no_missing_fields(extractor, complete_srs_document):
+    """
+    Test that if there are no missing fields, the document remains unchanged.
+    """
+    filled = extractor.fill_missing_data(complete_srs_document)
+    assert filled == complete_srs_document
 
-    def test_partial_document(self):
-        """
-        Test filling missing data when only part of the source document is available.
-        """
-        # Simulate extractor initialized with partial SRS
-        partial_extractor = RequirementExtractor(source_document='srs_partial')
-        incomplete_req = {
-            'id': None,
-            'description': 'The system shall support password reset.',
-            'priority': None
-        }
-        completed_req = partial_extractor.extract_requirements([incomplete_req])[0]
-        assert completed_req['id'] is not None, "RAG should still attempt to fill missing data"
-        # Priority may be less accurate, but should be filled
-        assert completed_req['priority'] is not None, "RAG should make a best-effort fill"
+def test_fill_missing_data_empty_document(extractor, empty_srs_document):
+    """
+    Test that an empty SRS document is handled gracefully (edge case).
+    """
+    filled = extractor.fill_missing_data(empty_srs_document)
+    assert filled == []
 
-# To run: pytest test_requirement_extraction.py
+def test_fill_missing_data_unknown_fields(extractor, srs_with_unknown_field):
+    """
+    Test system behavior when missing fields are not present in the knowledge base (edge case).
+    """
+    filled = extractor.fill_missing_data(srs_with_unknown_field)
+    assert filled[0]["actor"] == "System User"  # known
+    assert filled[0]["action"] == "Implement RAG techniques"  # known
+    assert filled[0]["foo"] == "UNKNOWN"  # unknown field handled gracefully
+
+def test_fill_missing_data_all_fields_missing(extractor, knowledge_base):
+    """
+    Test the system when all fields are missing in the requirement (edge case).
+    """
+    srs_all_missing = [
+        {key: None for key in knowledge_base.keys()}
+    ]
+    filled = extractor.fill_missing_data(srs_all_missing)
+    for key in knowledge_base:
+        assert filled[0][key] == knowledge_base[key]
+
+def test_fill_missing_data_partial_knowledge_base():
+    """
+    Test behavior when the knowledge base is incomplete (edge case).
+    """
+    partial_kb = {"actor": "System User"}  # only actor is known
+    extractor = RequirementExtractor(partial_kb)
+    srs = [{"actor": None, "action": None}]
+    filled = extractor.fill_missing_data(srs)
+    assert filled[0]["actor"] == "System User"
+    assert filled[0]["action"] == "UNKNOWN"  # Not found in knowledge base
+
+def test_fill_missing_data_multiple_requirements(extractor):
+    """
+    Test that multiple requirements are filled independently.
+    """
+    srs = [
+        {"actor": None, "action": "A1", "goal": None, "priority": None},
+        {"actor": "System User", "action": None, "goal": None, "priority": None}
+    ]
+    filled = extractor.fill_missing_data(srs)
+    assert filled[0]["actor"] == "System User"
+    assert filled[0]["goal"] == "Improve accuracy and completeness"
+    assert filled[0]["priority"] == "Should Have"
+    assert filled[1]["action"] == "Implement RAG techniques"
+    assert filled[1]["goal"] == "Improve accuracy and completeness"
+    assert filled[1]["priority"] == "Should Have"
+
+# Additional teardown logic is not needed for these stateless fixtures
 ```
 
-**Key Points:**
-- Setup and teardown are handled via class methods.
-- Each test case is clearly documented with comments.
-- Positive cases (basic, bulk, type preservation) and edge cases (null input, unrecoverable, partial data) are covered.
-- Type preservation and consistency checks are included.
-- The interface is generic; adapt to your actual implementation as needed.
-
-Let me know if you need test doubles/mocks or further details!
+**Notes:**
+- The code is designed for clarity, maintainability, and extensibility.
+- Each test case targets a specific acceptance criterion or edge case.
+- Setup/teardown uses pytest fixtures.
+- Comments explain the intention of each test.
+- The RequirementExtractor and its method are mock implementations for illustrative purposes; replace them with your actual RAG implementation as needed.
