@@ -1,169 +1,126 @@
+Certainly! Below are comprehensive test cases in Python using **pytest** to cover the main functionality and edge cases for the described user story.
+
+We assume the existence of a function, e.g., `fill_missing_data_with_rag(document: str) -> str`, which utilizes RAG techniques to fill in missing data in a requirements document.
+
 ```python
 import pytest
 
-# Assume we have a RAGFiller class that implements the retrieval-augmented generation logic
-# We mock or stub external dependencies for the purpose of testing
+# Assume this is the method under test. 
+# In real-life, import it from your module, e.g.:
+# from my_module import fill_missing_data_with_rag
 
-class MockRetriever:
-    """Mock retriever simulating a knowledge base search."""
-    def retrieve(self, query):
-        # Simulate retrieval results based on the query
-        if query == "What is the maximum user limit?":
-            return ["The maximum user limit is 1000."]
-        elif query == "What is the system response time?":
-            return ["System response time must be less than 2 seconds."]
-        else:
-            return []
-
-class MockGenerator:
-    """Mock generator simulating text generation from retrieved context."""
-    def generate(self, context, missing_field):
-        # Simple mapping for demonstration
-        if missing_field == "maximum user limit":
-            return "1000"
-        elif missing_field == "system response time":
-            return "less than 2 seconds"
-        else:
-            return "N/A"
-
-class RAGFiller:
-    """Retrieval-Augmented Generation for missing SRS fields."""
-    def __init__(self, retriever, generator):
-        self.retriever = retriever
-        self.generator = generator
-
-    def fill_missing(self, requirement, missing_field):
-        # Retrieve context
-        context = self.retriever.retrieve(f"What is the {missing_field}?")
-        if not context:
-            return None
-        # Generate value from context
-        value = self.generator.generate(context, missing_field)
-        # Fill and return updated requirement
-        filled_req = requirement.copy()
-        filled_req[missing_field] = value
-        return filled_req
-
-# Fixtures for setup and teardown
+def fill_missing_data_with_rag(document):
+    """
+    Dummy implementation for demonstration.
+    Replace with import from actual RAG implementation.
+    """
+    # This is just a stub!
+    if not document.strip():
+        return ""
+    if "[MISSING]" in document:
+        # Simulate RAG filling
+        return document.replace("[MISSING]", "RAG_FILLED_DATA")
+    return document  # No missing data
 
 @pytest.fixture(scope="function")
-def rag_filler():
-    """Fixture to set up RAGFiller with mocks."""
-    retriever = MockRetriever()
-    generator = MockGenerator()
-    rag = RAGFiller(retriever, generator)
-    yield rag
-    # Teardown if needed (e.g., closing connections/resources)
-    del rag
-
-# ---- Test Cases ----
-
-def test_fill_missing_field_success(rag_filler):
+def sample_documents():
     """
-    Test that missing data is accurately filled when relevant context exists.
+    Setup sample documents for different scenarios.
+    Teardown not required for immutable test data.
     """
-    requirement = {"id": 1, "description": "System must support maximum users", "maximum user limit": None}
-    filled = rag_filler.fill_missing(requirement, "maximum user limit")
-    assert filled["maximum user limit"] == "1000"
-    # Ensure original fields remain unchanged
-    assert filled["description"] == "System must support maximum users"
-
-def test_fill_missing_field_with_no_context(rag_filler):
-    """
-    Test that None is returned when no context is found for the missing field.
-    """
-    requirement = {"id": 2, "description": "Unknown field", "unknown field": None}
-    filled = rag_filler.fill_missing(requirement, "unknown field")
-    assert filled is None
-
-def test_fill_multiple_missing_fields(rag_filler):
-    """
-    Test filling multiple missing fields sequentially in a requirement.
-    """
-    requirement = {
-        "id": 3,
-        "description": "Performance and scalability details",
-        "maximum user limit": None,
-        "system response time": None
+    docs = {
+        "complete": "The system shall allow users to login.",
+        "single_missing": "The system shall allow users to [MISSING].",
+        "multiple_missing": "The [MISSING] shall [MISSING] the [MISSING].",
+        "no_data": "",
+        "no_missing": "All requirements are present and complete.",
+        "ambiguous": "The system shall [MISSING].",
+        "edge_case_large": "Requirement: [MISSING]. " * 1000,
+        "special_chars": "The system shall allow [MISSING]!@#$%^&*()[]{};:'\",.<>/?",
     }
-    filled = rag_filler.fill_missing(requirement, "maximum user limit")
-    assert filled["maximum user limit"] == "1000"
-    filled = rag_filler.fill_missing(filled, "system response time")
-    assert filled["system response time"] == "less than 2 seconds"
+    return docs
 
-def test_fill_when_field_already_present(rag_filler):
+def test_fill_single_missing(sample_documents):
     """
-    Test that existing fields are not overwritten by the RAG filler.
+    Test that a single missing field is accurately filled.
     """
-    requirement = {
-        "id": 4,
-        "description": "Existing field test",
-        "maximum user limit": "500"
-    }
-    filled = rag_filler.fill_missing(requirement, "maximum user limit")
-    # Should overwrite or not? Depends on spec; let's assume should not overwrite.
-    assert filled["maximum user limit"] == "500"
+    input_doc = sample_documents["single_missing"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert "RAG_FILLED_DATA" in filled_doc
+    assert "[MISSING]" not in filled_doc
 
-def test_empty_requirement_dict(rag_filler):
+def test_fill_multiple_missing(sample_documents):
     """
-    Test that the RAG filler handles empty requirement dicts gracefully.
+    Test that multiple missing fields are all filled.
     """
-    requirement = {}
-    filled = rag_filler.fill_missing(requirement, "maximum user limit")
-    assert filled["maximum user limit"] == "1000"
+    input_doc = sample_documents["multiple_missing"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert filled_doc.count("RAG_FILLED_DATA") == 3
+    assert "[MISSING]" not in filled_doc
 
-def test_missing_field_key_not_in_requirement(rag_filler):
+def test_no_missing_fields(sample_documents):
     """
-    Test that the filler adds the missing field if it doesn't exist in the requirement dict.
+    Test that a document with no missing fields is unchanged.
     """
-    requirement = {"id": 5, "description": "No field present"}
-    filled = rag_filler.fill_missing(requirement, "system response time")
-    assert filled["system response time"] == "less than 2 seconds"
+    input_doc = sample_documents["complete"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert filled_doc == input_doc
 
-def test_generator_returns_na_for_unmatched_field(rag_filler):
+def test_empty_document(sample_documents):
     """
-    Test that 'N/A' is filled in when the generator cannot generate a value.
+    Test that an empty input document returns an empty result (edge case).
     """
-    requirement = {"id": 6, "description": "Unknown scenario", "strange field": None}
-    # Patch generator to always return "N/A" for unknown fields
-    filled = rag_filler.fill_missing(requirement, "strange field")
-    assert filled["strange field"] == "N/A" or filled is None
+    input_doc = sample_documents["no_data"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert filled_doc == ""
 
-# ---- Edge Case: Large requirement dict ----
-
-def test_large_requirement_dict_performance(rag_filler):
+def test_no_missing_marker(sample_documents):
     """
-    Test that the RAG filler handles large requirement dicts efficiently.
+    Test that a document without the missing marker is unchanged.
     """
-    requirement = {"id": 7, "description": "Large dict"}
-    # Add many unrelated fields
-    for i in range(1000):
-        requirement[f"extra_field_{i}"] = f"value_{i}"
-    requirement["maximum user limit"] = None
+    input_doc = sample_documents["no_missing"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert filled_doc == input_doc
 
-    filled = rag_filler.fill_missing(requirement, "maximum user limit")
-    assert filled["maximum user limit"] == "1000"
-    # Ensure unrelated fields are preserved
-    assert filled["extra_field_999"] == "value_999"
-
-# ---- Teardown validation ----
-
-def test_resource_cleanup_after_filling(rag_filler):
+def test_ambiguous_missing(sample_documents):
     """
-    Dummy test to ensure resources are cleaned up after use (teardown).
+    Test that ambiguous missing fields are filled (e.g., incomplete context).
     """
-    requirement = {"id": 8, "description": "Teardown test", "maximum user limit": None}
-    filled = rag_filler.fill_missing(requirement, "maximum user limit")
-    assert filled["maximum user limit"] == "1000"
-    # After this test, rag_filler is deleted due to teardown
+    input_doc = sample_documents["ambiguous"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert "RAG_FILLED_DATA" in filled_doc
 
-# ---- End of test cases ----
+def test_large_document_with_missing(sample_documents):
+    """
+    Test that RAG can handle large documents with many missing fields (stress test).
+    """
+    input_doc = sample_documents["edge_case_large"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert filled_doc.count("RAG_FILLED_DATA") == 1000
+    assert "[MISSING]" not in filled_doc
+
+def test_special_characters_near_missing(sample_documents):
+    """
+    Test that special characters near missing fields are preserved after filling.
+    """
+    input_doc = sample_documents["special_chars"]
+    filled_doc = fill_missing_data_with_rag(input_doc)
+    assert "RAG_FILLED_DATA!@#$%^&*()[]{};:'\",.<>/?" in filled_doc
+
+# Teardown is not necessary as we use immutable fixtures, but if you allocate resources,
+# use yield in fixtures or add teardown logic here.
+
+# To run: pytest -v test_fill_missing.py
 ```
 
-### Notes:
-- The tests assume a simple RAGFiller interface for demonstration.
-- The `MockRetriever` and `MockGenerator` simulate external dependencies.
-- The tests cover main functionality and various edge cases, including when no context is found, field already present, empty and large requirement dicts, and generator fallback.
-- Setup and teardown are managed via a pytest fixture.
-- Comments describe the intent of each test.
-- Adjust the implementation details to fit your actual RAG system’s API and behavior.
+---
+
+**Notes:**
+
+- Each test case is clearly commented to indicate intent and coverage.
+- `sample_documents` fixture provides input variations for setup; teardown is not needed for these immutable examples.
+- Replace the stub for `fill_missing_data_with_rag` with the actual RAG implementation.
+- Edge cases include empty input, large input, ambiguous context, and special characters.
+- All assertions ensure that missing fields are filled and no `[MISSING]` placeholders remain.
+
+This structure ensures completeness and accuracy per the user story and acceptance criteria.
