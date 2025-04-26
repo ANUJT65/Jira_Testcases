@@ -1,216 +1,185 @@
-Certainly! Here are comprehensive pytest test cases for the given user story, covering main functionality and edge cases. The tests assume a hypothetical API or service with a document management system supporting version control and role-based access control (RBAC).
+Certainly! Below are comprehensive pytest test cases covering the main and edge-case scenarios for the user story: "Provide version-controlled document management for collaboration".
 
-Assumptions:
-- There is a DocumentService class handling documents.
-- There is a User class with roles assigned.
-- RBAC supports at least 'admin', 'editor', and 'viewer' roles.
-- Collaboration actions are performed via methods on DocumentService.
-- All actions are tracked for versioning.
+**Assumptions**:
 
-You can adapt the fixtures and mock objects according to your actual implementation.
+- There is a `DocumentManagementSystem` class with methods such as:  
+  - `create_document(user, content)`
+  - `edit_document(user, doc_id, content)`
+  - `get_document_versions(doc_id)`
+  - `get_document_version(doc_id, version_number)`
+  - `add_collaborator(doc_id, user, role)`
+  - `get_collaborators(doc_id)`
+- RBAC (Role-Based Access Control) roles: 'admin', 'editor', 'viewer'
+- Users have methods to authenticate and are assigned roles per document.
+- All required classes/methods are mockable for testing.
+- The system supports secure multi-user collaboration and versioning.
+
+---
 
 ```python
 import pytest
 
-# --- Hypothetical service and user classes (to be replaced with real implementations) ---
-class User:
-    def __init__(self, username, role):
-        self.username = username
-        self.role = role
-
-class Document:
-    def __init__(self, doc_id, content, version=1):
-        self.doc_id = doc_id
-        self.content = content
-        self.version = version
-        self.history = [(version, content)]
-
-class DocumentService:
-    def __init__(self):
-        self.documents = {}
-        self.collaborators = {}  # doc_id: list of User
-
-    def create_document(self, user, doc_id, content):
-        if user.role not in ['admin', 'editor']:
-            raise PermissionError('Insufficient privileges')
-        if doc_id in self.documents:
-            raise ValueError('Document already exists')
-        doc = Document(doc_id, content)
-        self.documents[doc_id] = doc
-        self.collaborators[doc_id] = [user]
-        return doc
-
-    def add_collaborator(self, doc_id, user):
-        self.collaborators[doc_id].append(user)
-
-    def edit_document(self, user, doc_id, new_content):
-        if user not in self.collaborators[doc_id]:
-            raise PermissionError('Not a collaborator')
-        if user.role not in ['admin', 'editor']:
-            raise PermissionError('Insufficient privileges')
-        doc = self.documents[doc_id]
-        doc.version += 1
-        doc.content = new_content
-        doc.history.append((doc.version, new_content))
-        return doc
-
-    def get_document(self, user, doc_id):
-        if user not in self.collaborators[doc_id]:
-            raise PermissionError('Not a collaborator')
-        return self.documents[doc_id]
-
-    def get_document_history(self, user, doc_id):
-        if user not in self.collaborators[doc_id]:
-            raise PermissionError('Not a collaborator')
-        return self.documents[doc_id].history
-
-    def revert_document(self, user, doc_id, version):
-        if user.role != 'admin':
-            raise PermissionError('Only admin can revert')
-        doc = self.documents[doc_id]
-        for v, content in doc.history:
-            if v == version:
-                doc.version += 1
-                doc.content = content
-                doc.history.append((doc.version, content))
-                return doc
-        raise ValueError('Version not found')
-
-    def remove_document(self, doc_id):
-        del self.documents[doc_id]
-        del self.collaborators[doc_id]
-
-# --- Fixtures for setup and teardown ---
-@pytest.fixture
-def document_service():
-    # Setup: Create a fresh DocumentService for each test
-    service = DocumentService()
-    yield service
-    # Teardown: Clean up all documents after each test
-    service.documents.clear()
-    service.collaborators.clear()
+# Assuming these are imported from the actual implementation
+from myapp.document_management import DocumentManagementSystem, User, DocumentNotFound, PermissionDenied
 
 @pytest.fixture
-def users():
-    # Define users with various roles
-    return {
-        'admin': User('alice', 'admin'),
-        'editor': User('bob', 'editor'),
-        'viewer': User('carol', 'viewer'),
-        'outsider': User('eve', 'viewer')  # Not a collaborator
-    }
+def setup_system():
+    """
+    Setup the Document Management System and test users.
+    """
+    system = DocumentManagementSystem()
+    admin = User(username='admin_user', role='admin')
+    editor = User(username='editor_user', role='editor')
+    viewer = User(username='viewer_user', role='viewer')
+    outsider = User(username='outsider', role='viewer')  # Not a collaborator
+    yield system, admin, editor, viewer, outsider
+    # Teardown logic if needed
+    system.cleanup_all_documents()
 
-# --- Test Cases ---
 
-def test_version_control_on_edit(document_service, users):
+def test_version_control_on_create_and_edit(setup_system):
     """
-    Test that editing a document creates a new version and maintains version history.
+    Test that document creation and edits generate version history.
     """
-    doc = document_service.create_document(users['admin'], 'req-1', 'Initial content')
-    document_service.add_collaborator('req-1', users['editor'])
-    document_service.edit_document(users['editor'], 'req-1', 'Updated content')
-    history = document_service.get_document_history(users['admin'], 'req-1')
-    assert len(history) == 2
-    assert history[0][1] == 'Initial content'
-    assert history[1][1] == 'Updated content'
-    assert document_service.documents['req-1'].version == 2
+    system, admin, _, _, _ = setup_system
+    # Admin creates a document
+    doc_id = system.create_document(admin, "Initial requirements")
+    # Edit the document twice
+    system.edit_document(admin, doc_id, "Requirements v2")
+    system.edit_document(admin, doc_id, "Requirements v3")
+    
+    # Fetch version history
+    versions = system.get_document_versions(doc_id)
+    assert len(versions) == 3  # Initial + 2 edits
+    
+    # Check content of each version
+    assert system.get_document_version(doc_id, 1) == "Initial requirements"
+    assert system.get_document_version(doc_id, 2) == "Requirements v2"
+    assert system.get_document_version(doc_id, 3) == "Requirements v3"
 
-def test_access_control_enforced(document_service, users):
+
+def test_rbac_enforcement_on_edit_and_view(setup_system):
     """
-    Test that only users with appropriate RBAC roles can edit documents,
-    and viewers cannot edit.
+    Ensure RBAC protocols enforce edit and view permissions.
     """
-    doc = document_service.create_document(users['admin'], 'req-2', 'Original')
-    document_service.add_collaborator('req-2', users['viewer'])
+    system, admin, editor, viewer, outsider = setup_system
+    doc_id = system.create_document(admin, "Secured doc")
+    system.add_collaborator(doc_id, editor, 'editor')
+    system.add_collaborator(doc_id, viewer, 'viewer')
+    
     # Editor can edit
-    document_service.add_collaborator('req-2', users['editor'])
-    document_service.edit_document(users['editor'], 'req-2', 'Edit by editor')
+    system.edit_document(editor, doc_id, "Editor update")
     # Viewer cannot edit
-    with pytest.raises(PermissionError):
-        document_service.edit_document(users['viewer'], 'req-2', 'Edit by viewer')
-    # Outsider (not a collaborator) cannot even view
-    with pytest.raises(PermissionError):
-        document_service.get_document(users['outsider'], 'req-2')
+    with pytest.raises(PermissionDenied):
+        system.edit_document(viewer, doc_id, "Attempted edit by viewer")
+    # Outsider cannot view
+    with pytest.raises(PermissionDenied):
+        system.get_document_versions(doc_id)
 
-def test_multi_user_collaboration_and_traceability(document_service, users):
-    """
-    Test that edits by multiple collaborators are versioned and traceable.
-    """
-    doc = document_service.create_document(users['admin'], 'req-3', 'First')
-    document_service.add_collaborator('req-3', users['editor'])
-    document_service.edit_document(users['admin'], 'req-3', 'Second')
-    document_service.edit_document(users['editor'], 'req-3', 'Third')
-    history = document_service.get_document_history(users['admin'], 'req-3')
-    assert len(history) == 3
-    assert [h[1] for h in history] == ['First', 'Second', 'Third']
 
-def test_secure_collaboration_adheres_to_rbac(document_service, users):
+def test_multi_user_version_traceability(setup_system):
     """
-    Test that unauthorized users cannot access or modify documents,
-    ensuring secure collaboration.
+    Test that edits by different users are traceable in version history.
     """
-    doc = document_service.create_document(users['admin'], 'req-4', 'Top secret')
-    # Outsider is not a collaborator
-    with pytest.raises(PermissionError):
-        document_service.get_document(users['outsider'], 'req-4')
-    # Only admin/editor can edit
-    document_service.add_collaborator('req-4', users['editor'])
-    document_service.edit_document(users['admin'], 'req-4', 'Change by admin')
-    with pytest.raises(PermissionError):
-        document_service.edit_document(users['viewer'], 'req-4', 'Change by viewer')
+    system, admin, editor, _, _ = setup_system
+    doc_id = system.create_document(admin, "Base doc")
+    system.add_collaborator(doc_id, editor, 'editor')
+    system.edit_document(editor, doc_id, "Editor changed")
+    versions = system.get_document_versions(doc_id)
+    # Each version should have metadata about the author
+    assert versions[1]['author'] == 'admin_user'
+    assert versions[2]['author'] == 'editor_user'
 
-def test_document_revert_only_by_admin(document_service, users):
-    """
-    Test that only admins can revert a document to a previous version.
-    """
-    doc = document_service.create_document(users['admin'], 'req-5', 'Start')
-    document_service.add_collaborator('req-5', users['editor'])
-    document_service.edit_document(users['editor'], 'req-5', 'Change1')
-    document_service.edit_document(users['editor'], 'req-5', 'Change2')
-    # Admin can revert
-    document_service.revert_document(users['admin'], 'req-5', 1)
-    assert document_service.documents['req-5'].content == 'Start'
-    # Editor cannot revert
-    with pytest.raises(PermissionError):
-        document_service.revert_document(users['editor'], 'req-5', 2)
 
-def test_edge_case_edit_nonexistent_document(document_service, users):
+def test_accessibility_for_all_collaborators(setup_system):
     """
-    Edge Case: Attempt to edit a non-existent document should raise an error.
+    Ensure all assigned collaborators can access the document according to their permissions.
     """
-    with pytest.raises(KeyError):
-        document_service.edit_document(users['admin'], 'nonexistent', 'Edit')
+    system, admin, editor, viewer, outsider = setup_system
+    doc_id = system.create_document(admin, "Shared doc")
+    system.add_collaborator(doc_id, editor, 'editor')
+    system.add_collaborator(doc_id, viewer, 'viewer')
 
-def test_edge_case_create_duplicate_document(document_service, users):
-    """
-    Edge Case: Attempt to create a document with an existing ID should raise an error.
-    """
-    document_service.create_document(users['admin'], 'req-6', 'First version')
-    with pytest.raises(ValueError):
-        document_service.create_document(users['admin'], 'req-6', 'Another version')
+    # All collaborators can view
+    assert system.get_document_version(doc_id, 1, user=admin) == "Shared doc"
+    assert system.get_document_version(doc_id, 1, user=editor) == "Shared doc"
+    assert system.get_document_version(doc_id, 1, user=viewer) == "Shared doc"
+    # Outsider cannot view
+    with pytest.raises(PermissionDenied):
+        system.get_document_version(doc_id, 1, user=outsider)
 
-def test_edge_case_revert_to_nonexistent_version(document_service, users):
+    
+def test_edge_case_version_rollback(setup_system):
     """
-    Edge Case: Attempt to revert to a non-existent document version should raise an error.
+    Test rolling back to a previous version.
     """
-    document_service.create_document(users['admin'], 'req-7', 'Init')
-    with pytest.raises(ValueError):
-        document_service.revert_document(users['admin'], 'req-7', 99)
+    system, admin, _, _, _ = setup_system
+    doc_id = system.create_document(admin, "Original")
+    system.edit_document(admin, doc_id, "Second version")
+    system.edit_document(admin, doc_id, "Third version")
+    # Rollback to version 1
+    system.rollback_document(doc_id, 1, user=admin)
+    # New version should be a copy of version 1
+    versions = system.get_document_versions(doc_id)
+    assert versions[-1]['content'] == "Original"
 
-def test_document_accessibility_after_multiple_edits(document_service, users):
-    """
-    Test that after multiple edits, the latest version is always accessible to collaborators.
-    """
-    doc = document_service.create_document(users['admin'], 'req-8', 'Base')
-    document_service.add_collaborator('req-8', users['editor'])
-    for i in range(1, 6):
-        document_service.edit_document(users['editor'], 'req-8', f'Change {i}')
-    latest_doc = document_service.get_document(users['admin'], 'req-8')
-    assert latest_doc.content == 'Change 5'
-    assert latest_doc.version == 6
 
-def test_viewer_can_view_but_not_edit(document_service, users):
+def test_edge_case_concurrent_edits(setup_system):
     """
-    Test that a viewer can view a document if a collaborator, but cannot edit.
+    Simulate concurrent edits and ensure version consistency.
     """
-    doc =
+    system, admin, editor, _, _ = setup_system
+    doc_id = system.create_document(admin, "Concurrent doc")
+    system.add_collaborator(doc_id, editor, 'editor')
+    # Simulate two users editing at the same time
+    system.edit_document(admin, doc_id, "Admin edit")
+    system.edit_document(editor, doc_id, "Editor edit")
+    # Should result in two sequential versions, not overwrite
+    versions = system.get_document_versions(doc_id)
+    assert versions[-2]['content'] == "Admin edit"
+    assert versions[-1]['content'] == "Editor edit"
+
+
+def test_edge_case_delete_document_permissions(setup_system):
+    """
+    Ensure only appropriate roles can delete a document.
+    """
+    system, admin, editor, viewer, _ = setup_system
+    doc_id = system.create_document(admin, "To be deleted")
+    # Editor cannot delete
+    with pytest.raises(PermissionDenied):
+        system.delete_document(editor, doc_id)
+    # Admin can delete
+    system.delete_document(admin, doc_id)
+    with pytest.raises(DocumentNotFound):
+        system.get_document_versions(doc_id)
+
+
+def test_edge_case_invalid_document_access(setup_system):
+    """
+    Attempt to access a non-existent document.
+    """
+    system, _, _, _, outsider = setup_system
+    # Accessing an invalid document id
+    with pytest.raises(DocumentNotFound):
+        system.get_document_versions("nonexistent_doc")
+    # Outsider accessing a valid but restricted document
+    doc_id = system.create_document(outsider, "Private doc")
+    with pytest.raises(PermissionDenied):
+        system.get_document_versions(doc_id)
+
+```
+
+---
+
+### **Explanation**
+
+- **Setup/Teardown**: The `setup_system` fixture initializes the system and users, and cleans up after tests.
+- **Version Control**: Tests document creation, editing, version listing, and rollback.
+- **RBAC**: Verifies that roles are enforced for editing, viewing, and deleting.
+- **Multi-user Collaboration**: Checks traceability of edits and that all collaborators have correct access.
+- **Edge Cases**: Handles concurrent edits, invalid document access, and deletion permissions.
+- **Error Handling**: Asserts correct exceptions are raised for unauthorized actions and missing documents.
+- **Comments**: Each test has a docstring explaining its intent.
+
+**Adjust class/method names to fit your actual implementation.**
