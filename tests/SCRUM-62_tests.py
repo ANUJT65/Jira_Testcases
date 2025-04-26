@@ -1,161 +1,135 @@
-Certainly! Below are comprehensive pytest test cases for the user story:
-
-- Coverage includes main flows and edge cases
-- Each test is clearly described
-- Setup and teardown are present (using pytest fixtures)
-- The tests assume a function named fill_missing_data_with_rag(input_requirements, source_document) → output_requirements.
-- Mocking is used where external dependencies (like a retrieval system or language model) would exist.
+Certainly! Here are comprehensive pytest test cases for the user story "Use RAG techniques to intelligently fill missing data during requirement extraction." These cover main functionalities and edge cases, include setup/teardown, and are well-commented.
 
 ```python
 import pytest
-from unittest.mock import patch
 
-# Example requirements with missing data
-SAMPLE_REQUIREMENTS_WITH_MISSING = [
-    {"id": 1, "text": "The system shall provide user authentication.", "priority": "High"},
-    {"id": 2, "text": None, "priority": "Medium"},  # Missing text
-    {"id": 3, "text": "The system shall log all access attempts.", "priority": None},  # Missing priority
-    {"id": 4, "text": "", "priority": "Low"},  # Empty text (edge case)
-]
+# Assume these are your main system interfaces.
+# Mock/fake implementations would replace them in real tests.
 
-# Expected filled requirements after RAG
-EXPECTED_FILLED_REQUIREMENTS = [
-    {"id": 1, "text": "The system shall provide user authentication.", "priority": "High"},
-    {"id": 2, "text": "The system shall allow password reset.", "priority": "Medium"},  # Filled text
-    {"id": 3, "text": "The system shall log all access attempts.", "priority": "High"},  # Filled priority
-    {"id": 4, "text": "The system shall notify users on failed login.", "priority": "Low"},  # Filled text
-]
+class RequirementExtractor:
+    def __init__(self, rag_engine):
+        self.rag_engine = rag_engine
 
-# Mock source SRS document
-MOCK_SRS_DOCUMENT = """
-1. The system shall provide user authentication. [High]
-2. The system shall allow password reset. [Medium]
-3. The system shall log all access attempts. [High]
-4. The system shall notify users on failed login. [Low]
-"""
+    def extract(self, srs_document):
+        # This should extract requirements, filling missing data using RAG.
+        # For illustration, we'll simulate expected behavior.
+        extracted = []
+        for req in srs_document:
+            if req['missing']:
+                filled = self.rag_engine.fill_missing(req['text'])
+                req['text'] = filled
+                req['filled'] = True
+            else:
+                req['filled'] = False
+            extracted.append(req)
+        return extracted
 
-@pytest.fixture
-def input_requirements():
-    # Setup: Provide sample requirements with missing data
-    return SAMPLE_REQUIREMENTS_WITH_MISSING.copy()
+class MockRAGEngine:
+    def fill_missing(self, text):
+        # Simulate RAG filling missing parts of a requirement
+        return text.replace('<missing>', 'filled_data')
+
 
 @pytest.fixture
-def source_document():
-    # Setup: Provide a mock SRS document
-    return MOCK_SRS_DOCUMENT
+def rag_engine():
+    # Setup: create a mock RAG engine
+    return MockRAGEngine()
 
-@pytest.fixture(autouse=True)
-def setup_and_teardown():
-    # Setup operations before each test (e.g., initialize mocks, DB connections, etc.)
-    print("\n[Setup] Initializing test environment...")
-    yield
-    # Teardown operations after each test (e.g., cleanup)
-    print("[Teardown] Cleaning up test environment...")
+@pytest.fixture
+def extractor(rag_engine):
+    # Setup: create requirement extractor with RAG engine
+    return RequirementExtractor(rag_engine)
 
-# Mocked implementation of the RAG fill function for testing
-def mock_fill_missing_data_with_rag(input_reqs, source_doc):
-    # Simple mock: fill the missing or empty fields based on expected output
-    filled = []
-    for req, expected in zip(input_reqs, EXPECTED_FILLED_REQUIREMENTS):
-        filled.append(expected.copy())
-    return filled
-
-# Main test: Happy path—missing fields are filled correctly
-def test_rag_fills_missing_data(input_requirements, source_document):
-    """
-    Test that the RAG system fills all missing requirement fields using the source document.
-    """
-    with patch('your_module.fill_missing_data_with_rag', side_effect=mock_fill_missing_data_with_rag):
-        from your_module import fill_missing_data_with_rag
-        output = fill_missing_data_with_rag(input_requirements, source_document)
-        assert output == EXPECTED_FILLED_REQUIREMENTS, "RAG should fill all missing data correctly"
-
-# Edge Case 1: No missing data—output should be unchanged
-def test_rag_no_missing_data(source_document):
-    """
-    Test that the RAG system leaves requirements unchanged if there is no missing data.
-    """
-    complete_requirements = [
-        {"id": 1, "text": "The system shall provide user authentication.", "priority": "High"},
-        {"id": 2, "text": "The system shall allow password reset.", "priority": "Medium"},
+@pytest.fixture
+def srs_document():
+    # Example SRS requirements with and without missing data
+    return [
+        {'id': 1, 'text': 'The system shall <missing> the requests.', 'missing': True},
+        {'id': 2, 'text': 'The system shall log all transactions.', 'missing': False},
+        {'id': 3, 'text': '<missing> must be validated.', 'missing': True},
     ]
-    with patch('your_module.fill_missing_data_with_rag', return_value=complete_requirements):
-        from your_module import fill_missing_data_with_rag
-        output = fill_missing_data_with_rag(complete_requirements, source_document)
-        assert output == complete_requirements, "RAG should not modify complete requirements"
 
-# Edge Case 2: All fields missing—should attempt to fill all
-def test_rag_all_fields_missing(source_document):
-    """
-    Test the system's behavior when all requirement fields are missing.
-    """
-    incomplete_requirements = [
-        {"id": 1, "text": None, "priority": None},
-        {"id": 2, "text": "", "priority": None},
-    ]
-    expected_output = [
-        {"id": 1, "text": "The system shall provide user authentication.", "priority": "High"},
-        {"id": 2, "text": "The system shall allow password reset.", "priority": "Medium"},
-    ]
-    with patch('your_module.fill_missing_data_with_rag', return_value=expected_output):
-        from your_module import fill_missing_data_with_rag
-        output = fill_missing_data_with_rag(incomplete_requirements, source_document)
-        assert output == expected_output, "RAG should fill all missing fields from the source document"
 
-# Edge Case 3: Source document does not contain needed information
-def test_rag_missing_in_source_document(input_requirements):
+def test_fill_missing_data_main_functionality(extractor, srs_document):
     """
-    Test system's behavior when the source document does not have the required information.
+    Test that missing data in requirements is filled using RAG techniques.
     """
-    empty_source_doc = ""
-    # Expect that missing fields remain None or empty if not found
-    expected_output = [
-        {"id": 1, "text": "The system shall provide user authentication.", "priority": "High"},
-        {"id": 2, "text": None, "priority": "Medium"},
-        {"id": 3, "text": "The system shall log all access attempts.", "priority": None},
-        {"id": 4, "text": "", "priority": "Low"},
-    ]
-    with patch('your_module.fill_missing_data_with_rag', return_value=expected_output):
-        from your_module import fill_missing_data_with_rag
-        output = fill_missing_data_with_rag(input_requirements, empty_source_doc)
-        assert output == expected_output, "RAG should not fabricate data if not present in the source document"
+    extracted = extractor.extract(srs_document)
+    # Check that requirements with missing data are filled
+    assert extracted[0]['filled'] is True
+    assert 'filled_data' in extracted[0]['text']
+    assert extracted[1]['filled'] is False  # no missing data
+    assert extracted[2]['filled'] is True
+    assert 'filled_data' in extracted[2]['text']
 
-# Edge Case 4: Malformed or corrupted source document
-def test_rag_malformed_source_document(input_requirements):
-    """
-    Test system's robustness when the source document is malformed.
-    """
-    malformed_doc = "<<<corrupted data>>>"
-    # Expect that missing fields remain None or empty if parsing fails
-    expected_output = [
-        {"id": 1, "text": "The system shall provide user authentication.", "priority": "High"},
-        {"id": 2, "text": None, "priority": "Medium"},
-        {"id": 3, "text": "The system shall log all access attempts.", "priority": None},
-        {"id": 4, "text": "", "priority": "Low"},
-    ]
-    with patch('your_module.fill_missing_data_with_rag', return_value=expected_output):
-        from your_module import fill_missing_data_with_rag
-        output = fill_missing_data_with_rag(input_requirements, malformed_doc)
-        assert output == expected_output, "RAG should handle malformed documents gracefully"
 
-# Edge Case 5: Large input requirements list (performance and completeness)
-def test_rag_large_input(source_document):
+def test_no_missing_data_remains(extractor, srs_document):
     """
-    Test that the RAG system can handle a large list of requirements efficiently.
+    Test that after extraction, there are no '<missing>' placeholders in any requirements.
     """
-    large_input = [{"id": i, "text": None if i % 2 == 0 else f"Req {i}", "priority": None if i % 3 == 0 else "Medium"} for i in range(1000)]
-    # For simplicity, assume the mock returns the same structure with filled texts for even ids
-    filled_output = [{"id": i, "text": f"Filled req {i}" if i % 2 == 0 else f"Req {i}", "priority": "High" if i % 3 == 0 else "Medium"} for i in range(1000)]
-    with patch('your_module.fill_missing_data_with_rag', return_value=filled_output):
-        from your_module import fill_missing_data_with_rag
-        output = fill_missing_data_with_rag(large_input, source_document)
-        assert len(output) == 1000
-        assert all(req["text"] is not None for req in output), "All requirements should have filled 'text'"
-        assert all(req["priority"] is not None for req in output), "All requirements should have filled 'priority'"
+    extracted = extractor.extract(srs_document)
+    for req in extracted:
+        assert '<missing>' not in req['text']
+
+
+def test_already_complete_requirement_untouched(extractor, srs_document):
+    """
+    Test that requirements without missing data are not altered.
+    """
+    extracted = extractor.extract(srs_document)
+    assert extracted[1]['text'] == 'The system shall log all transactions.'
+
+
+def test_empty_requirement_list(extractor):
+    """
+    Edge case: No requirements in the document.
+    """
+    result = extractor.extract([])
+    assert result == []
+
+def test_all_requirements_missing(extractor):
+    """
+    Edge case: All requirements have missing data.
+    """
+    srs = [
+        {'id': 1, 'text': '<missing>', 'missing': True},
+        {'id': 2, 'text': 'User must <missing>.', 'missing': True}
+    ]
+    extracted = extractor.extract(srs)
+    for req in extracted:
+        assert 'filled_data' in req['text']
+        assert req['filled'] is True
+
+def test_invalid_requirement_format(extractor):
+    """
+    Edge case: Requirement missing expected keys.
+    """
+    srs = [{'id': 1, 'message': 'Invalid requirement'}]  # 'text' and 'missing' keys absent
+    # The extractor may raise KeyError or handle gracefully
+    with pytest.raises(KeyError):
+        extractor.extract(srs)
+
+def test_rag_engine_failure(monkeypatch, extractor, srs_document):
+    """
+    Edge case: RAG engine fails to fill missing data (e.g., returns None or raises).
+    """
+    def failing_fill_missing(text):
+        raise Exception("RAG engine failure")
+    monkeypatch.setattr(extractor.rag_engine, 'fill_missing', failing_fill_missing)
+    with pytest.raises(Exception, match="RAG engine failure"):
+        extractor.extract(srs_document)
+
+
+# Teardown is handled automatically by pytest fixtures.
+# If you need to close resources, use `yield` fixtures or add explicit teardown code.
 
 ```
 
-**Instructions:**
-- Replace `your_module` with the actual module name where `fill_missing_data_with_rag` is implemented.
-- Adapt the mock/expected data structures and logic as needed to align with your actual implementation.
-- These tests can be run with `pytest` and will comprehensively verify the RAG behavior for requirement extraction, including edge cases and robustness checks.
+**Key Points:**
+- Each test case validates a key functionality or edge case based on the user story and acceptance criteria.
+- Setup is accomplished via `pytest` fixtures.
+- Teardown is handled implicitly, but custom teardown can be added if needed.
+- Comments describe the purpose of each test.
+- The tests are structured to be clear and maintainable.
+
+If you have a real implementation of the RAG engine or requirement extractor, replace the mocks accordingly.
