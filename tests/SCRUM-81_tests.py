@@ -1,158 +1,160 @@
-Certainly! Below are comprehensive pytest test cases for the described user story, focusing on **stakeholder** role-based access control and collaboration features. The tests include setup and teardown, positive (main functionality) and negative (edge) scenarios, and are well-commented for clarity.
-
-Assumptions:
-
-- There's a User model with roles.
-- There's an AccessControl system enforcing permissions.
-- Collaboration features (e.g., create, view, comment on documents) exist.
-- A test fixture/database is used for setup/cleanup.
-
 ```python
 import pytest
 
-# Mock classes/functions to illustrate structure (replace with actual implementations)
+# Mock classes and functions to simulate the application (these would be replaced by real implementations)
 class User:
     def __init__(self, username, role):
         self.username = username
         self.role = role
 
-class AccessControl:
-    @staticmethod
-    def can_access_feature(user, feature):
-        # Example: Only stakeholders can access 'collaboration' features
-        if user.role == 'stakeholder' and feature in ['collaboration', 'view', 'comment']:
-            return True
-        return False
+class CollaborationPlatform:
+    def __init__(self):
+        # role: set of permissions
+        self.permissions = {
+            'stakeholder': {'view_project', 'comment', 'upload_file'},
+            'admin': {'view_project', 'comment', 'upload_file', 'manage_users'},
+            'guest': {'view_project'}
+        }
+        self.users = []
+        self.collaboration_features = ['view_project', 'comment', 'upload_file']
+        self.access_log = []
 
-class CollaborationFeature:
-    @staticmethod
-    def create_document(user, content):
-        if not AccessControl.can_access_feature(user, 'collaboration'):
-            raise PermissionError("Access denied")
-        return {"author": user.username, "content": content}
+    def add_user(self, user):
+        self.users.append(user)
 
-    @staticmethod
-    def comment_on_document(user, document, comment):
-        if not AccessControl.can_access_feature(user, 'comment'):
-            raise PermissionError("Access denied")
-        # Add comment (mocked)
-        return {"document": document, "commenter": user.username, "comment": comment}
+    def has_access(self, user, feature):
+        allowed = feature in self.permissions.get(user.role, set())
+        self.access_log.append((user.username, feature, allowed))
+        return allowed
 
-    @staticmethod
-    def view_document(user, document):
-        if not AccessControl.can_access_feature(user, 'view'):
-            raise PermissionError("Access denied")
-        return document
+    def perform_collaboration(self, user, feature):
+        if self.has_access(user, feature):
+            return f"{user.username} performed {feature}"
+        else:
+            raise PermissionError(f"Access denied for {user.role} to {feature}")
 
-# Fixtures for setup and teardown
+    def reset(self):
+        self.users = []
+        self.access_log = []
+
+# ----------- Pytest Fixtures for Setup/Teardown -----------
+@pytest.fixture
+def platform():
+    # Setup: create a fresh platform instance
+    platform = CollaborationPlatform()
+    yield platform
+    # Teardown: reset platform state
+    platform.reset()
+
 @pytest.fixture
 def stakeholder_user():
-    # Setup: Create a stakeholder user
-    user = User(username="stakeholder1", role="stakeholder")
-    yield user
-    # Teardown: Clean up user if needed
+    # Setup: create a stakeholder user
+    return User(username="alice", role="stakeholder")
 
 @pytest.fixture
-def non_stakeholder_user():
-    # Setup: Create a user with a different role
-    user = User(username="guest1", role="guest")
-    yield user
-    # Teardown: Clean up user if needed
+def guest_user():
+    # Setup: create a guest user
+    return User(username="eve", role="guest")
 
 @pytest.fixture
-def sample_document(stakeholder_user):
-    # Setup: Create a sample document
-    doc = CollaborationFeature.create_document(stakeholder_user, "Initial Content")
-    yield doc
-    # Teardown: Remove document if needed
+def admin_user():
+    # Setup: create an admin user
+    return User(username="bob", role="admin")
 
-# Test Cases
+# ----------- Test Cases -----------
 
-def test_stakeholder_can_access_collaboration_features(stakeholder_user):
+def test_stakeholder_access_to_collaboration_features(platform, stakeholder_user):
     """
-    Test that a user with 'stakeholder' role can access collaboration features.
+    Stakeholder should have access to all collaboration features.
     """
-    # Stakeholder should be able to create a document
-    doc = CollaborationFeature.create_document(stakeholder_user, "Stakeholder Doc")
-    assert doc["author"] == stakeholder_user.username
+    platform.add_user(stakeholder_user)
+    for feature in platform.collaboration_features:
+        assert platform.has_access(stakeholder_user, feature), f"Stakeholder cannot access {feature}"
+        # Try to perform the action, should not raise
+        assert platform.perform_collaboration(stakeholder_user, feature) == f"alice performed {feature}"
 
-    # Stakeholder should be able to comment on a document
-    comment = CollaborationFeature.comment_on_document(stakeholder_user, doc, "Looks good!")
-    assert comment["commenter"] == stakeholder_user.username
-
-    # Stakeholder should be able to view the document
-    viewed_doc = CollaborationFeature.view_document(stakeholder_user, doc)
-    assert viewed_doc["content"] == "Stakeholder Doc"
-
-def test_non_stakeholder_cannot_access_collaboration_features(non_stakeholder_user, sample_document):
+def test_stakeholder_cannot_access_admin_only_feature(platform, stakeholder_user):
     """
-    Test that a non-stakeholder user cannot access stakeholder collaboration features.
+    Stakeholder should NOT have access to admin-only features.
     """
-    # Non-stakeholder should not be able to create a document
+    platform.add_user(stakeholder_user)
     with pytest.raises(PermissionError):
-        CollaborationFeature.create_document(non_stakeholder_user, "Unauthorized Doc")
+        platform.perform_collaboration(stakeholder_user, 'manage_users')
 
-    # Non-stakeholder should not be able to comment on a document
-    with pytest.raises(PermissionError):
-        CollaborationFeature.comment_on_document(non_stakeholder_user, sample_document, "Spam comment")
+def test_guest_cannot_collaborate(platform, guest_user):
+    """
+    Guest can only view projects, not comment or upload files.
+    """
+    platform.add_user(guest_user)
+    assert platform.has_access(guest_user, 'view_project')
+    # Edge: Try to access collaboration features not allowed
+    for feature in ['comment', 'upload_file']:
+        assert not platform.has_access(guest_user, feature)
+        with pytest.raises(PermissionError):
+            platform.perform_collaboration(guest_user, feature)
 
-    # Non-stakeholder should not be able to view the document
-    with pytest.raises(PermissionError):
-        CollaborationFeature.view_document(non_stakeholder_user, sample_document)
+def test_admin_has_all_permissions(platform, admin_user):
+    """
+    Admin should have access to all features, including collaboration and admin-only.
+    """
+    platform.add_user(admin_user)
+    for feature in platform.permissions['admin']:
+        assert platform.has_access(admin_user, feature)
+        assert platform.perform_collaboration(admin_user, feature) == f"bob performed {feature}"
 
-def test_stakeholder_cannot_access_other_restricted_features(stakeholder_user):
+def test_unknown_role_no_access(platform):
     """
-    Test that stakeholder users cannot access features outside their permitted scope.
+    Edge case: user with an unknown role should not have access to any features.
     """
-    # Assume 'admin_panel' is a restricted feature
-    assert not AccessControl.can_access_feature(stakeholder_user, 'admin_panel')
+    unknown_user = User(username="charlie", role="unknown_role")
+    platform.add_user(unknown_user)
+    for feature in ['view_project', 'comment', 'upload_file', 'manage_users']:
+        assert not platform.has_access(unknown_user, feature)
+        with pytest.raises(PermissionError):
+            platform.perform_collaboration(unknown_user, feature)
 
-def test_edge_case_invalid_user_role():
+def test_stakeholder_access_log(platform, stakeholder_user):
     """
-    Edge case: Test behavior when a user has an invalid role.
+    Ensure access attempts are logged for audit and security.
     """
-    invalid_user = User(username="user_invalid", role="invalid_role")
-    # Should not be able to access collaboration features
-    with pytest.raises(PermissionError):
-        CollaborationFeature.create_document(invalid_user, "Doc by invalid role")
+    platform.add_user(stakeholder_user)
+    platform.has_access(stakeholder_user, 'view_project')
+    platform.has_access(stakeholder_user, 'manage_users')
+    assert ('alice', 'view_project', True) in platform.access_log
+    assert ('alice', 'manage_users', False) in platform.access_log
 
-def test_edge_case_missing_role_attribute():
+def test_multiple_stakeholders_collaborate(platform):
     """
-    Edge case: Test behavior when the user's role attribute is missing (None).
+    Multiple stakeholders can collaborate simultaneously without interfering with each other's permissions.
     """
-    user = User(username="user_none", role=None)
-    with pytest.raises(PermissionError):
-        CollaborationFeature.create_document(user, "Doc by user with no role")
+    user1 = User(username="alice", role="stakeholder")
+    user2 = User(username="dave", role="stakeholder")
+    platform.add_user(user1)
+    platform.add_user(user2)
+    # Both should be able to perform collaboration features
+    for feature in platform.collaboration_features:
+        assert platform.has_access(user1, feature)
+        assert platform.has_access(user2, feature)
+        assert platform.perform_collaboration(user1, feature) == f"alice performed {feature}"
+        assert platform.perform_collaboration(user2, feature) == f"dave performed {feature}"
 
-def test_edge_case_empty_document_content(stakeholder_user):
+def test_stakeholder_edge_case_empty_permissions(platform, stakeholder_user):
     """
-    Edge case: Test creating a document with empty content.
+    Edge case: If stakeholder role loses permissions (misconfiguration), access should be denied.
     """
-    doc = CollaborationFeature.create_document(stakeholder_user, "")
-    # Assuming content can be empty, but verify
-    assert doc["content"] == ""
+    platform.add_user(stakeholder_user)
+    # Simulate misconfiguration: remove all permissions from stakeholder
+    platform.permissions['stakeholder'] = set()
+    for feature in ['view_project', 'comment', 'upload_file']:
+        assert not platform.has_access(stakeholder_user, feature)
+        with pytest.raises(PermissionError):
+            platform.perform_collaboration(stakeholder_user, feature)
 
-def test_edge_case_long_document_content(stakeholder_user):
-    """
-    Edge case: Test creating a document with very long content.
-    """
-    long_content = "A" * 10000  # 10,000 characters
-    doc = CollaborationFeature.create_document(stakeholder_user, long_content)
-    assert doc["content"] == long_content
-
-def test_edge_case_multiple_stakeholders_collaborate(stakeholder_user, sample_document):
-    """
-    Test that multiple stakeholders can collaborate on the same document.
-    """
-    stakeholder2 = User(username="stakeholder2", role="stakeholder")
-    comment = CollaborationFeature.comment_on_document(stakeholder2, sample_document, "Collaboration comment")
-    assert comment["commenter"] == "stakeholder2"
-
-# Additional teardown/cleanup can be added as needed for persistent test environments.
+# ---------- END OF TEST CASES ----------
 ```
 
 **Notes:**
-- Replace mock classes with your actual application code/interfaces.
-- Extend fixtures for more complex setup/teardown if your system requires.
-- These tests cover positive, negative, and edge cases for stakeholder role-based collaboration.
-- Each test includes comments explaining its purpose for maintainability and clarity.
+- Each test is annotated with a descriptive docstring.
+- Setup and teardown are managed via pytest fixtures.
+- Main functionality (stakeholder access, guest/admin checks) and edge cases (unknown role, permissions misconfiguration, audit logging, multiple users) are covered.
+- The code uses mock classes to simulate the platform and users; in real tests, these would be replaced with actual implementations or appropriate mocks.
