@@ -1,203 +1,186 @@
-Certainly! Below are comprehensive **pytest** test cases for the user story, covering main functionalities and edge cases, with clear setup/teardown, and descriptive comments.  
-Assumptions are made about the document management APIs and RBAC system for collaborative editing.  
-You can adjust the fixtures and API calls to match your actual implementation.
+Certainly! Below is a set of comprehensive pytest test cases for the described user story. The test cases are designed for a hypothetical document management system with version control and RBAC (Role-Based Access Control). The setup and teardown use pytest fixtures. Comments explain each test's intent and coverage.
 
 ```python
 import pytest
 
-# Mocks (replace with actual imports in your system)
-from unittest.mock import MagicMock
-
-# Assume these are your main classes/services
-class DocumentManagementSystem:
-    def __init__(self):
-        self.documents = {}
-        self.versions = {}
-        self.rbac = {}  # {user: role}
-        self.collaborators = {}
-        self.change_log = []
-
-    def create_document(self, doc_id, content, user):
-        if doc_id in self.documents:
-            raise Exception("Document already exists")
-        self.documents[doc_id] = content
-        self.versions[doc_id] = [content]
-        self.collaborators[doc_id] = [user]
-        self.change_log.append((doc_id, 1, user, content))
-        return 1  # version number
-
-    def update_document(self, doc_id, content, user):
-        if not self.has_write_access(doc_id, user):
-            raise PermissionError("No write access")
-        new_version = len(self.versions[doc_id]) + 1
-        self.versions[doc_id].append(content)
-        self.change_log.append((doc_id, new_version, user, content))
-        self.documents[doc_id] = content
-        return new_version
-
-    def get_document_version(self, doc_id, version=None):
-        if doc_id not in self.versions:
-            raise Exception("No such document")
-        if version is None:
-            return self.versions[doc_id][-1]
-        return self.versions[doc_id][version-1]
-
-    def add_collaborator(self, doc_id, user, role):
-        self.collaborators[doc_id].append(user)
-        self.rbac[user] = role
-
-    def has_write_access(self, doc_id, user):
-        return self.rbac.get(user) in ('editor', 'admin') and user in self.collaborators[doc_id]
-
-    def has_read_access(self, doc_id, user):
-        return self.rbac.get(user) in ('viewer', 'editor', 'admin') and user in self.collaborators[doc_id]
-
-    def get_change_log(self, doc_id):
-        return [log for log in self.change_log if log[0] == doc_id]
+# Hypothetical imports; replace with actual imports from your project
+from document_management_system import (
+    DocumentManagementSystem,
+    User,
+    Role,
+    Document,
+    PermissionError,
+    VersionConflictError,
+)
 
 @pytest.fixture
-def dms():
-    # Setup: initialize a mock document management system
-    dms = DocumentManagementSystem()
-    # Add users with different roles
-    dms.rbac = {
-        'alice': 'admin',
-        'bob': 'editor',
-        'carol': 'viewer',
-        'dave': 'editor',
+def user_roles():
+    """Fixture to create users with different roles."""
+    return {
+        'admin': User(username='admin_user', role=Role.ADMIN),
+        'editor': User(username='editor_user', role=Role.EDITOR),
+        'viewer': User(username='viewer_user', role=Role.VIEWER),
+        'unauthorized': User(username='unauth_user', role=Role.UNAUTHORIZED),
     }
+
+@pytest.fixture
+def document_system(tmp_path, user_roles):
+    """
+    Fixture to initialize the Document Management System
+    with a temp directory as storage.
+    """
+    dms = DocumentManagementSystem(storage_path=tmp_path)
+    # Pre-populate with a requirement document
+    doc = Document(
+        title="Requirement 1",
+        content="Initial requirement text.",
+        created_by=user_roles['admin']
+    )
+    doc_id = dms.create_document(doc, user_roles['admin'])
     yield dms
-    # Teardown: clear all documents and roles
-    dms.documents.clear()
-    dms.versions.clear()
-    dms.rbac.clear()
-    dms.collaborators.clear()
-    dms.change_log.clear()
+    # Teardown handled by tmp_path clean-up
 
-# --- Test Cases ---
+###############################
+# Version Control Test Cases  #
+###############################
 
-def test_version_control_on_document_create_and_update(dms):
-    """
-    Test that creating and updating a document maintains version history.
-    """
-    doc_id = "req_doc_001"
-    user = "alice"
-    v1 = dms.create_document(doc_id, "Initial requirements", user)
-    assert v1 == 1
-    assert dms.get_document_version(doc_id) == "Initial requirements"
+def test_create_new_document_version(document_system, user_roles):
+    """Test that a user with EDITOR role can create a new version of a document."""
+    doc_id = 1  # Pre-existing doc from fixture
+    # Editor updates document
+    new_content = "Updated requirement text version 2."
+    version = document_system.update_document(
+        doc_id=doc_id,
+        new_content=new_content,
+        user=user_roles['editor']
+    )
+    assert version == 2
+    assert document_system.get_document(doc_id, version=2).content == new_content
 
-    # Update document
-    dms.add_collaborator(doc_id, "bob", "editor")
-    v2 = dms.update_document(doc_id, "Updated requirements", "bob")
-    assert v2 == 2
-    assert dms.get_document_version(doc_id) == "Updated requirements"
-    # Check previous version is intact
-    assert dms.get_document_version(doc_id, 1) == "Initial requirements"
+def test_version_history_is_maintained(document_system, user_roles):
+    """Test that previous versions are retrievable and immutable."""
+    doc_id = 1
+    # Create additional version
+    document_system.update_document(doc_id, "Second version.", user_roles['editor'])
+    # Retrieve both versions
+    v1 = document_system.get_document(doc_id, version=1)
+    v2 = document_system.get_document(doc_id, version=2)
+    assert v1.content == "Initial requirement text."
+    assert v2.content == "Second version."
+    # Ensure versions are immutable (simulate attempt to edit old version)
+    with pytest.raises(VersionConflictError):
+        document_system.update_document(doc_id, "Edit old version", user_roles['editor'], version=1)
 
-def test_multi_user_collaboration_with_rbac(dms):
-    """
-    Test that only users with proper RBAC roles can access/collaborate on documents.
-    """
-    doc_id = "req_doc_002"
-    dms.create_document(doc_id, "Collaboration doc", "alice")
-    dms.add_collaborator(doc_id, "bob", "editor")
-    dms.add_collaborator(doc_id, "carol", "viewer")
+def test_version_control_edge_case_concurrent_update(document_system, user_roles):
+    """Test concurrent update conflict handling (optimistic locking)."""
+    doc_id = 1
+    # User A fetches version 1
+    # User B creates version 2
+    document_system.update_document(doc_id, "Edit by B", user_roles['editor'])
+    # User A tries to update the old version (should fail)
+    with pytest.raises(VersionConflictError):
+        document_system.update_document(doc_id, "Edit by A", user_roles['editor'], version=1)
 
+###############################
+# RBAC & Collaboration Tests  #
+###############################
+
+def test_rbac_prevents_unauthorized_edit(document_system, user_roles):
+    """Test that a viewer cannot edit or version a document."""
+    doc_id = 1
+    with pytest.raises(PermissionError):
+        document_system.update_document(doc_id, "Malicious edit", user_roles['viewer'])
+
+def test_rbac_allows_authorized_access(document_system, user_roles):
+    """Test that editor and admin can edit documents, viewer can only read."""
+    doc_id = 1
     # Editor can update
-    assert dms.has_write_access(doc_id, "bob")
-    dms.update_document(doc_id, "Bob's update", "bob")
-    # Viewer cannot update
-    assert not dms.has_write_access(doc_id, "carol")
+    version = document_system.update_document(doc_id, "Editor edit", user_roles['editor'])
+    assert version == 2
+    # Admin can update
+    version = document_system.update_document(doc_id, "Admin edit", user_roles['admin'])
+    assert version == 3
+    # Viewer can only read
+    doc = document_system.get_document(doc_id, user=user_roles['viewer'])
+    assert doc.content == "Admin edit"
+    # Unauthorized user cannot read
     with pytest.raises(PermissionError):
-        dms.update_document(doc_id, "Carol's update", "carol")
-    # Viewer can read
-    assert dms.has_read_access(doc_id, "carol")
-    assert dms.get_document_version(doc_id) == "Bob's update"
+        document_system.get_document(doc_id, user=user_roles['unauthorized'])
 
-def test_access_control_edge_cases(dms):
-    """
-    Test edge cases for RBAC, such as users not in collaborator list or with no role.
-    """
-    doc_id = "req_doc_003"
-    dms.create_document(doc_id, "Doc", "alice")
-    # User with role but not a collaborator
-    dms.rbac["eve"] = "editor"
-    assert not dms.has_write_access(doc_id, "eve")
+def test_multi_user_collaboration(document_system, user_roles):
+    """Test that multiple users can sequentially edit and version a document."""
+    doc_id = 1
+    # Editor creates version 2
+    v2 = document_system.update_document(doc_id, "Editor collaboration", user_roles['editor'])
+    assert v2 == 2
+    # Admin creates version 3
+    v3 = document_system.update_document(doc_id, "Admin collaboration", user_roles['admin'])
+    assert v3 == 3
+    # Check version history
+    assert document_system.get_document(doc_id, version=2).content == "Editor collaboration"
+    assert document_system.get_document(doc_id, version=3).content == "Admin collaboration"
+
+###############################
+# Traceability & Audit Tests  #
+###############################
+
+def test_document_history_includes_user_and_timestamp(document_system, user_roles):
+    """Test that document history records user and timestamp for each version."""
+    import datetime
+    doc_id = 1
+    document_system.update_document(doc_id, "v2 content", user_roles['editor'])
+    history = document_system.get_document_history(doc_id)
+    assert len(history) == 2
+    for entry in history:
+        assert 'user' in entry and isinstance(entry['user'], User)
+        assert 'timestamp' in entry and isinstance(entry['timestamp'], datetime.datetime)
+
+def test_document_accessibility_for_team(document_system, user_roles):
+    """Test that all Change Management Team roles can access required documents."""
+    doc_id = 1
+    # All roles except unauthorized should access
+    for role in ['admin', 'editor', 'viewer']:
+        doc = document_system.get_document(doc_id, user=user_roles[role])
+        assert doc is not None
+    # Unauthorized user cannot access
     with pytest.raises(PermissionError):
-        dms.update_document(doc_id, "Eve's update", "eve")
-    # User without any role
-    assert not dms.has_write_access(doc_id, "mallory")
-    with pytest.raises(PermissionError):
-        dms.update_document(doc_id, "Mallory's update", "mallory")
+        document_system.get_document(doc_id, user=user_roles['unauthorized'])
 
-def test_version_traceability_and_change_log(dms):
-    """
-    Test that every document change is logged and can be traced back.
-    """
-    doc_id = "req_doc_004"
-    dms.create_document(doc_id, "Start", "alice")
-    dms.add_collaborator(doc_id, "bob", "editor")
-    dms.update_document(doc_id, "Second", "bob")
-    dms.update_document(doc_id, "Third", "alice")
-    change_log = dms.get_change_log(doc_id)
-    assert len(change_log) == 3
-    assert change_log[0][1] == 1  # version
-    assert change_log[1][1] == 2
-    assert change_log[2][2] == "alice"  # last edit by alice
+###############################
+# Edge Case Tests             #
+###############################
 
-def test_document_accessibility_for_collaborators(dms):
-    """
-    Test that all collaborators with appropriate roles can access the latest version.
-    """
-    doc_id = "req_doc_005"
-    dms.create_document(doc_id, "Base", "alice")
-    dms.add_collaborator(doc_id, "bob", "editor")
-    dms.add_collaborator(doc_id, "carol", "viewer")
-    dms.update_document(doc_id, "Update1", "bob")
-    assert dms.get_document_version(doc_id) == "Update1"
-    assert dms.has_read_access(doc_id, "carol")
-    assert dms.get_document_version(doc_id) == "Update1"
+def test_nonexistent_document_access(document_system, user_roles):
+    """Test that accessing a nonexistent document raises an error."""
+    with pytest.raises(KeyError):
+        document_system.get_document(999, user=user_roles['admin'])
 
-def test_version_control_edge_cases(dms):
-    """
-    Test version control edge cases: revert, non-existing version, concurrent updates.
-    """
-    doc_id = "req_doc_006"
-    dms.create_document(doc_id, "V1", "alice")
-    dms.add_collaborator(doc_id, "bob", "editor")
-    dms.update_document(doc_id, "V2", "bob")
-    # Non-existing version
-    with pytest.raises(IndexError):
-        dms.get_document_version(doc_id, 10)
-    # Revert to previous version (simulate by overwriting with old content)
-    old_content = dms.get_document_version(doc_id, 1)
-    dms.update_document(doc_id, old_content, "bob")
-    assert dms.get_document_version(doc_id) == "V1"
-    # Simulate concurrent update: two users update at the same time
-    # (This would require threading/locking in a real system; here we just check that both changes are recorded)
-    dms.update_document(doc_id, "V3-alice", "alice")
-    dms.update_document(doc_id, "V4-bob", "bob")
-    assert dms.get_document_version(doc_id) == "V4-bob"
+def test_document_deletion_and_restoration(document_system, user_roles):
+    """Test deletion and restoration of documents (if supported)."""
+    doc_id = 1
+    document_system.delete_document(doc_id, user_roles['admin'])
+    with pytest.raises(KeyError):
+        document_system.get_document(doc_id, user=user_roles['admin'])
+    # If restoration is supported, test it
+    if hasattr(document_system, 'restore_document'):
+        document_system.restore_document(doc_id, user_roles['admin'])
+        doc = document_system.get_document(doc_id, user=user_roles['admin'])
+        assert doc is not None
 
-def test_secure_collaboration_enforcement(dms):
-    """
-    Test that users cannot bypass RBAC to access or modify documents.
-    """
-    doc_id = "req_doc_007"
-    dms.create_document(doc_id, "Secured", "alice")
-    # Unregistered user
-    with pytest.raises(PermissionError):
-        dms.update_document(doc_id, "Hack attempt", "unknown")
-    # Remove collaborator and test access
-    dms.add_collaborator(doc_id, "bob", "editor")
-    dms.collaborators[doc_id].remove("bob")
-    assert not dms.has_write_access(doc_id, "bob")
-    with pytest.raises(PermissionError):
-        dms.update_document(doc_id, "Another attempt", "bob")
 ```
 
-**Notes:**
-- Replace mock methods/classes with your actual implementation.
-- Each test is self-contained, uses fixtures for setup/teardown, and checks both successful and edge/negative scenarios.
-- Comments explain each test’s purpose.
-- Covers version control,
+---
+
+**Explanation:**
+
+- **Setup/Teardown:** Fixtures initialize users and document system. The temp path ensures isolation.
+- **Version Control:** Tests cover version creation, history, immutability, and conflict resolution.
+- **RBAC:** Tests enforce permissions for editors, admins, viewers, and unauthorized users.
+- **Collaboration:** Tests multiple users editing the same document in sequence.
+- **Traceability:** Tests that history includes user and timestamp for each version.
+- **Accessibility:** Tests that all users with required roles can access documents.
+- **Edge Cases:** Tests for nonexistent documents and (optionally) deletion/restoration logic.
+
+**Note:**  
+Adapt class names and exception types as needed to match your actual implementation.  
+This suite provides a robust foundation for ensuring your document management system meets the story's requirements.
