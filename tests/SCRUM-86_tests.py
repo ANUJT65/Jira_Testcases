@@ -1,122 +1,166 @@
-Certainly! Below are comprehensive **pytest** test cases for the given user story, covering both main functionalities and edge cases for sending email notifications on task completion or failure. The code assumes the existence of a function `send_task_notification(task_id, status, error_details=None)` and uses fixtures for setup/teardown. You should replace the mock implementations with your actual logic as needed.
-
 ```python
 import pytest
+from unittest import mock
 
-# Mock email outbox to capture sent emails for assertions
-class EmailOutbox:
-    def __init__(self):
-        self.emails = []
+# Assume the following functions/classes exist in the application:
+# send_email(recipient, subject, body): Sends an email
+# notify_task_status(user_email, task_id, status, error_details=None): Handles the notification logic
 
-    def send_email(self, to, subject, body):
-        self.emails.append({"to": to, "subject": subject, "body": body})
+# Mock sample data for testing
+USER_EMAIL = "user@example.com"
+TASK_ID = 12345
 
-    def clear(self):
-        self.emails.clear()
-
-    def get_last_email(self):
-        return self.emails[-1] if self.emails else None
-
-# Fixture to provide a fresh outbox for each test
-@pytest.fixture
-def email_outbox():
-    outbox = EmailOutbox()
-    yield outbox
-    outbox.clear()
-
-# Mock send_task_notification function (replace with real implementation)
-def send_task_notification(task_id, status, error_details=None, email_outbox=None):
-    to = "ops-team@example.com"
-    if status == "completed":
-        subject = f"Task {task_id} Completed"
-        body = f"The dormant account review task {task_id} has been completed successfully."
-        email_outbox.send_email(to, subject, body)
-    elif status == "failed":
-        subject = f"Task {task_id} Failed"
-        body = f"The dormant account review task {task_id} has failed.\n"
-        if error_details:
-            body += f"Error: {error_details['error']}\nSuggested Action: {error_details.get('suggested_action', 'None')}"
-        else:
-            body += "No error details provided."
-        email_outbox.send_email(to, subject, body)
-    # No-op for other statuses
-
-# ---------------------- Test Cases ----------------------
-
-def test_email_sent_on_task_completion(email_outbox):
+@pytest.fixture(autouse=True)
+def setup_and_teardown():
     """
-    Test that an email notification is sent when a task is completed successfully.
+    Setup and teardown fixture.
+    Setup: Patch the send_email function to avoid sending real emails.
+    Teardown: Stop the patch.
     """
-    send_task_notification(task_id=101, status="completed", email_outbox=email_outbox)
-    assert len(email_outbox.emails) == 1
-    last_email = email_outbox.get_last_email()
-    assert last_email['subject'] == "Task 101 Completed"
-    assert "completed successfully" in last_email['body']
+    with mock.patch("your_module.send_email") as mocked_send_email:
+        yield mocked_send_email  # Provide the mock for use in tests
 
-def test_email_sent_on_task_failure_with_error_details(email_outbox):
-    """
-    Test that an email notification is sent when a task fails, 
-    and that it includes error details and suggested actions.
-    """
-    error_details = {"error": "Database connection lost", "suggested_action": "Check DB server"}
-    send_task_notification(task_id=102, status="failed", error_details=error_details, email_outbox=email_outbox)
-    assert len(email_outbox.emails) == 1
-    last_email = email_outbox.get_last_email()
-    assert last_email['subject'] == "Task 102 Failed"
-    assert "failed" in last_email['body']
-    assert "Database connection lost" in last_email['body']
-    assert "Check DB server" in last_email['body']
+# --- Test Cases ---
 
-def test_email_sent_on_task_failure_without_error_details(email_outbox):
+def test_email_sent_on_task_completion(setup_and_teardown):
     """
-    Edge Case: Email is still sent on failure even if error details are missing,
-    and a sensible message is included.
+    Test that an email notification is sent when a task completes successfully.
     """
-    send_task_notification(task_id=103, status="failed", email_outbox=email_outbox)
-    assert len(email_outbox.emails) == 1
-    last_email = email_outbox.get_last_email()
-    assert last_email['subject'] == "Task 103 Failed"
-    assert "No error details provided" in last_email['body']
+    from your_module import notify_task_status
 
-def test_no_email_sent_for_unrelated_status(email_outbox):
-    """
-    Edge Case: No email should be sent for statuses other than 'completed' or 'failed'.
-    """
-    send_task_notification(task_id=104, status="in_progress", email_outbox=email_outbox)
-    assert len(email_outbox.emails) == 0
+    notify_task_status(USER_EMAIL, TASK_ID, status="completed")
 
-def test_multiple_notifications(email_outbox):
-    """
-    Test that multiple notifications can be sent in sequence without interference.
-    """
-    send_task_notification(task_id=105, status="completed", email_outbox=email_outbox)
-    send_task_notification(task_id=106, status="failed", error_details={"error": "Timeout"}, email_outbox=email_outbox)
-    assert len(email_outbox.emails) == 2
-    assert email_outbox.emails[0]['subject'] == "Task 105 Completed"
-    assert email_outbox.emails[1]['subject'] == "Task 106 Failed"
+    # Assert send_email was called once
+    setup_and_teardown.assert_called_once()
 
-def test_email_contains_task_id(email_outbox):
-    """
-    Test that the task ID is included in both the subject and body of the email.
-    """
-    send_task_notification(task_id=107, status="completed", email_outbox=email_outbox)
-    last_email = email_outbox.get_last_email()
-    assert "107" in last_email['subject']
-    assert "107" in last_email['body']
+    # Check contents of email
+    args, kwargs = setup_and_teardown.call_args
+    assert args[0] == USER_EMAIL
+    assert "completed" in args[1].lower() or "success" in args[1].lower()  # subject
+    assert str(TASK_ID) in args[2]  # body contains task id
 
-def test_email_sent_to_correct_recipient(email_outbox):
+def test_email_sent_on_task_failure_with_details(setup_and_teardown):
     """
-    Test that emails are sent to the designated operations team recipient.
+    Test that a failure notification includes error details and suggested actions.
     """
-    send_task_notification(task_id=108, status="completed", email_outbox=email_outbox)
-    last_email = email_outbox.get_last_email()
-    assert last_email['to'] == "ops-team@example.com"
+    from your_module import notify_task_status
 
-# ---------------------- End of Test Cases ----------------------
+    error_details = {
+        "error": "Database timeout",
+        "suggested_action": "Retry after checking DB connectivity"
+    }
+
+    notify_task_status(USER_EMAIL, TASK_ID, status="failed", error_details=error_details)
+
+    setup_and_teardown.assert_called_once()
+    args, kwargs = setup_and_teardown.call_args
+    assert args[0] == USER_EMAIL
+    assert "failed" in args[1].lower() or "error" in args[1].lower()
+    assert "Database timeout" in args[2]
+    assert "Retry after checking DB connectivity" in args[2]
+
+def test_email_not_sent_for_unknown_status(setup_and_teardown):
+    """
+    Test that no email is sent for unknown task statuses.
+    Edge case for unsupported status.
+    """
+    from your_module import notify_task_status
+
+    notify_task_status(USER_EMAIL, TASK_ID, status="unknown")
+
+    setup_and_teardown.assert_not_called()
+
+def test_email_sent_to_multiple_recipients(setup_and_teardown):
+    """
+    Test that emails are sent to all users in a list of recipients.
+    Edge case: multiple recipients.
+    """
+    from your_module import notify_task_status
+
+    recipients = ["user1@example.com", "user2@example.com"]
+    notify_task_status(recipients, TASK_ID, status="completed")
+
+    # Expect send_email called for each recipient
+    assert setup_and_teardown.call_count == len(recipients)
+    called_emails = [call[0][0] for call in setup_and_teardown.call_args_list]
+    for recipient in recipients:
+        assert recipient in called_emails
+
+def test_email_failure_handling(setup_and_teardown):
+    """
+    Test that errors in sending email are properly handled and do not raise uncaught exceptions.
+    Edge case: send_email fails (e.g., SMTP error).
+    """
+    from your_module import notify_task_status
+
+    # Simulate send_email throwing an exception
+    setup_and_teardown.side_effect = Exception("SMTP server not reachable")
+
+    try:
+        notify_task_status(USER_EMAIL, TASK_ID, status="completed")
+    except Exception:
+        pytest.fail("Exception should be handled internally and not propagated.")
+
+def test_failure_alert_without_suggested_action(setup_and_teardown):
+    """
+    Test sending a failure alert when no suggested action is provided (edge case).
+    """
+    from your_module import notify_task_status
+
+    error_details = {
+        "error": "Permission denied"
+        # No suggested_action
+    }
+
+    notify_task_status(USER_EMAIL, TASK_ID, status="failed", error_details=error_details)
+
+    setup_and_teardown.assert_called_once()
+    args, kwargs = setup_and_teardown.call_args
+    assert "Permission denied" in args[2]
+    # Should not error if suggested action missing
+
+def test_failure_alert_with_empty_error_details(setup_and_teardown):
+    """
+    Test sending a failure alert with empty error_details (edge case).
+    """
+    from your_module import notify_task_status
+
+    notify_task_status(USER_EMAIL, TASK_ID, status="failed", error_details={})
+
+    setup_and_teardown.assert_called_once()
+    args, kwargs = setup_and_teardown.call_args
+    # The body should at least mention failure, even if no details are present
+    assert "failed" in args[1].lower() or "error" in args[1].lower()
+
+def test_email_sent_when_user_email_is_none(setup_and_teardown):
+    """
+    Test that no email is sent if user email is None (edge case).
+    """
+    from your_module import notify_task_status
+
+    notify_task_status(None, TASK_ID, status="completed")
+
+    setup_and_teardown.assert_not_called()
+
+def test_email_sent_when_task_id_is_invalid(setup_and_teardown):
+    """
+    Test that an email is still attempted if the task_id is invalid (edge case).
+    """
+    from your_module import notify_task_status
+
+    invalid_task_id = ""  # or None
+    notify_task_status(USER_EMAIL, invalid_task_id, status="completed")
+
+    setup_and_teardown.assert_called_once()
+    args, kwargs = setup_and_teardown.call_args
+    assert args[0] == USER_EMAIL
+    # Should not crash even if task_id is invalid
+
+# --- End of Test Cases ---
 ```
 
 **Notes:**
-- The above code covers notifications for both task completion and failure (with and without error details), as well as various edge cases.
-- Each test is isolated and uses a fresh `email_outbox`.
-- Add/adjust imports and mock logic as per your actual project structure.
-- Replace the mock `send_task_notification` function with your actual implementation when integrating these tests.
+- Replace `your_module` with the actual module name where `send_email` and `notify_task_status` are defined.
+- The `setup_and_teardown` fixture uses `mock.patch` to replace the `send_email` function across all tests, ensuring no real emails are sent.
+- Each test is annotated with comments explaining its purpose and covering main flow and edge cases.
+- The tests cover positive flows, negative flows, and edge scenarios as per the acceptance criteria and user story.
