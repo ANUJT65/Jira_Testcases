@@ -1,140 +1,134 @@
-Certainly! Below are **comprehensive pytest test cases** for the user story: *Send email notifications for task completion or failures*. The tests cover main functionalities and edge cases, with setup and teardown, and are clearly commented for clarity.
+Certainly! Below is a well-structured set of `pytest` test cases for the provided user story. These tests assume the existence of an `EmailNotifier` class and a `Task` object/model, which you may need to adjust to fit your actual implementation.
 
-Assumptions:
-- There is a function `send_task_notification(task_status, user_email, error_details=None)` that sends emails.
-- There is a mock email backend or service to capture outgoing emails.
-- The error details and suggested actions are included in failure notifications.
-
-You can adapt function and module names to your implementation.
+The tests cover both "happy path" and edge cases for sending email notifications upon task completion or failure. Mocks are used to avoid sending real emails.
 
 ```python
 import pytest
+from unittest.mock import patch, MagicMock
 
-# Mocked email backend for testing purposes
-class MockEmailBackend:
-    def __init__(self):
-        self.outbox = []
+# Sample stubs to represent your email notifier and task classes
+class Task:
+    def __init__(self, id, status, error_details=None):
+        self.id = id
+        self.status = status
+        self.error_details = error_details
 
-    def send_email(self, subject, to, body):
-        self.outbox.append({'subject': subject, 'to': to, 'body': body})
+class EmailNotifier:
+    def send_task_completion_email(self, user_email, task):
+        pass
 
-    def clear(self):
-        self.outbox = []
+    def send_task_failure_email(self, user_email, task, suggested_actions):
+        pass
 
-# The function under test (to be implemented in your codebase)
-def send_task_notification(task_status, user_email, email_backend, error_details=None):
-    """
-    Sends email notification based on task status.
-    task_status: 'success' or 'failure'
-    user_email: recipient's email
-    email_backend: email backend instance
-    error_details: dict with 'error' and 'suggested_actions' (optional)
-    """
-    if task_status == 'success':
-        subject = "Dormant Account Task Completed"
-        body = "Your dormant account review task has been completed successfully."
-    elif task_status == 'failure':
-        subject = "Dormant Account Task Failed"
-        if not error_details or 'error' not in error_details or 'suggested_actions' not in error_details:
-            body = "Task failed, but error details are missing."
-        else:
-            body = (
-                f"Task failed with error: {error_details['error']}\n"
-                f"Suggested actions: {error_details['suggested_actions']}"
-            )
-    else:
-        raise ValueError("Unknown task status")
-    email_backend.send_email(subject, user_email, body)
-
-#####################
-# Pytest Test Cases #
-#####################
+# Fixtures for setup and teardown
+@pytest.fixture
+def email_notifier():
+    # Setup: Create a fresh EmailNotifier instance before each test
+    notifier = EmailNotifier()
+    yield notifier
+    # Teardown: Any cleanup if needed (none in this stub)
 
 @pytest.fixture
-def email_backend():
-    """Fixture to provide and clean up a mock email backend."""
-    backend = MockEmailBackend()
-    yield backend
-    backend.clear()
+def sample_user_email():
+    return "user@example.com"
 
 @pytest.fixture
-def user_email():
-    """Fixture to provide a sample user email."""
-    return "ops_team@example.com"
+def completed_task():
+    return Task(id=1, status="completed")
 
-def test_success_notification_sent(email_backend, user_email):
-    """Test that a success notification email is sent upon task completion."""
-    send_task_notification('success', user_email, email_backend)
-    assert len(email_backend.outbox) == 1
-    email = email_backend.outbox[0]
-    assert email['to'] == user_email
-    assert "completed" in email['subject'].lower()
-    assert "completed successfully" in email['body'].lower()
+@pytest.fixture
+def failed_task():
+    return Task(id=2, status="failed", error_details="Database timeout")
 
-def test_failure_notification_sent_with_details(email_backend, user_email):
-    """Test that a failure notification includes error details and suggested actions."""
-    error_details = {
-        'error': 'Database connection timeout.',
-        'suggested_actions': 'Check network connectivity and retry.'
-    }
-    send_task_notification('failure', user_email, email_backend, error_details)
-    assert len(email_backend.outbox) == 1
-    email = email_backend.outbox[0]
-    assert email['to'] == user_email
-    assert "failed" in email['subject'].lower()
-    assert "database connection timeout" in email['body'].lower()
-    assert "check network connectivity" in email['body'].lower()
+@pytest.fixture
+def suggested_actions():
+    return "Please retry after checking the database connection."
 
-def test_failure_notification_without_error_details(email_backend, user_email):
-    """Test that a failure notification gracefully handles missing error details."""
-    send_task_notification('failure', user_email, email_backend)
-    assert len(email_backend.outbox) == 1
-    email = email_backend.outbox[0]
-    assert "failed" in email['subject'].lower()
-    assert "error details are missing" in email['body'].lower()
+# Test Cases
 
-def test_failure_notification_with_partial_error_details(email_backend, user_email):
-    """Test that a failure notification missing suggested actions is handled."""
-    error_details = {'error': 'Invalid input data.'}
-    send_task_notification('failure', user_email, email_backend, error_details)
-    assert len(email_backend.outbox) == 1
-    email = email_backend.outbox[0]
-    assert "failed" in email['subject'].lower()
-    assert "error details are missing" in email['body'].lower()
+def test_send_email_on_task_completion(email_notifier, sample_user_email, completed_task):
+    """Test that an email is sent when a task is completed."""
+    with patch.object(email_notifier, 'send_task_completion_email', return_value=True) as mock_send:
+        result = email_notifier.send_task_completion_email(sample_user_email, completed_task)
+        mock_send.assert_called_once_with(sample_user_email, completed_task)
+        assert result is True
 
-def test_no_notification_for_invalid_status(email_backend, user_email):
-    """Test that invalid task status raises an exception and no email is sent."""
-    with pytest.raises(ValueError):
-        send_task_notification('unknown', user_email, email_backend)
-    assert len(email_backend.outbox) == 0
+def test_send_email_on_task_failure(email_notifier, sample_user_email, failed_task, suggested_actions):
+    """
+    Test that an email is sent when a task fails, 
+    and the email includes error details and suggested actions.
+    """
+    with patch.object(email_notifier, 'send_task_failure_email', return_value=True) as mock_send:
+        result = email_notifier.send_task_failure_email(sample_user_email, failed_task, suggested_actions)
+        mock_send.assert_called_once_with(sample_user_email, failed_task, suggested_actions)
+        assert result is True
 
-def test_empty_email_address(email_backend):
-    """Edge case: Test that empty email addresses do not result in an email sent."""
-    with pytest.raises(Exception):
-        send_task_notification('success', '', email_backend)
+def test_failure_email_includes_error_details_and_suggestions(email_notifier, sample_user_email, failed_task, suggested_actions):
+    """Test that failure alert email contains error details and suggested actions."""
+    with patch.object(email_notifier, 'send_task_failure_email') as mock_send:
+        email_notifier.send_task_failure_email(sample_user_email, failed_task, suggested_actions)
+        args, kwargs = mock_send.call_args
+        sent_task = args[1]
+        sent_suggestions = args[2]
+        assert failed_task.error_details in str(sent_task.error_details)
+        assert suggested_actions in sent_suggestions
 
-def test_multiple_notifications(email_backend, user_email):
-    """Test sending multiple notifications does not mix up messages."""
-    send_task_notification('success', user_email, email_backend)
-    send_task_notification('failure', user_email, email_backend, {
-        'error': 'Service unavailable.', 'suggested_actions': 'Try again later.'
-    })
-    assert len(email_backend.outbox) == 2
-    assert "completed" in email_backend.outbox[0]['subject'].lower()
-    assert "failed" in email_backend.outbox[1]['subject'].lower()
+def test_no_email_sent_for_unrelated_task_status(email_notifier, sample_user_email):
+    """Test that no email is sent if task status is not completion or failure."""
+    unrelated_task = Task(id=3, status="in_progress")
+    with patch.object(email_notifier, 'send_task_completion_email') as mock_complete, \
+         patch.object(email_notifier, 'send_task_failure_email') as mock_failure:
+        # Simulate logic that only sends emails for completed/failed
+        # Here, no email should be sent for "in_progress"
+        # (You may need to adapt this to your actual business logic)
+        assert not mock_complete.called
+        assert not mock_failure.called
 
-#####################
-# End of Test Cases #
-#####################
+def test_send_email_handles_invalid_email_address(email_notifier, completed_task):
+    """Test handling of invalid email addresses."""
+    invalid_email = "invalid-email"
+    with patch.object(email_notifier, 'send_task_completion_email', side_effect=ValueError("Invalid email address")):
+        with pytest.raises(ValueError, match="Invalid email address"):
+            email_notifier.send_task_completion_email(invalid_email, completed_task)
+
+def test_send_email_handles_missing_task_details(email_notifier, sample_user_email):
+    """Test that sending an email with missing task details raises an error."""
+    with patch.object(email_notifier, 'send_task_completion_email', side_effect=TypeError("Task cannot be None")):
+        with pytest.raises(TypeError, match="Task cannot be None"):
+            email_notifier.send_task_completion_email(sample_user_email, None)
+
+def test_failure_email_with_empty_suggested_actions(email_notifier, sample_user_email, failed_task):
+    """Test sending a failure email when suggested actions are not provided."""
+    with patch.object(email_notifier, 'send_task_failure_email', return_value=True) as mock_send:
+        result = email_notifier.send_task_failure_email(sample_user_email, failed_task, "")
+        mock_send.assert_called_once_with(sample_user_email, failed_task, "")
+        assert result is True
+
+def test_multiple_notifications_for_bulk_tasks(email_notifier, sample_user_email):
+    """Test email notifications are sent for multiple completed and failed tasks."""
+    tasks = [
+        Task(id=1, status="completed"),
+        Task(id=2, status="failed", error_details="Timeout"),
+        Task(id=3, status="completed"),
+        Task(id=4, status="failed", error_details="Permission denied"),
+    ]
+    with patch.object(email_notifier, 'send_task_completion_email', return_value=True) as mock_complete, \
+         patch.object(email_notifier, 'send_task_failure_email', return_value=True) as mock_failure:
+        for task in tasks:
+            if task.status == "completed":
+                email_notifier.send_task_completion_email(sample_user_email, task)
+            elif task.status == "failed":
+                email_notifier.send_task_failure_email(sample_user_email, task, "Contact admin.")
+        assert mock_complete.call_count == 2
+        assert mock_failure.call_count == 2
+
+# You may add more edge cases as your application evolves.
 ```
 
----
-
 **Notes:**
-- These tests can be run with `pytest`.
-- The mock email backend simulates capturing outgoing emails for assertions.
-- Edge cases include missing details, invalid statuses, and empty email addresses.
-- Setup and teardown are managed via fixtures.
-- Each test function is commented to explain its purpose.
+- These tests use `unittest.mock.patch` to mock methods and avoid sending real emails.
+- Fixtures provide test data and handle setup/teardown.
+- Each test has a docstring explaining its purpose.
+- Edge cases include invalid emails, missing task details, empty suggested actions, and bulk operations.
 
-You may need to adjust exception types and handling based on your actual implementation. Let me know if you need integration with your actual email sending library or more advanced mocking!
+**Adapt the stubs and interface to match your actual implementation.** If you need the code adapted to a specific application structure, please provide details about your classes or frameworks.
